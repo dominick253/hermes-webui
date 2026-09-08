@@ -212,6 +212,49 @@
     margin-left:3px;vertical-align:-2px;animation:blink 1s steps(1) infinite}
   @keyframes blink{50%{opacity:0}}
 
+  /* ============ LIVE TURN STATS ============ */
+  .tstats{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:0 auto 12px;
+    max-width:860px;padding:9px 14px;background:var(--panel);
+    border:1px solid var(--line);border-radius:var(--radius);font-family:var(--mono);font-size:11.5px}
+  .tstats .ts-live{display:flex;align-items:center;gap:7px;color:var(--green);
+    font-weight:700;font-size:10px;letter-spacing:.9px;text-transform:uppercase;flex:none}
+  .tstats .ts-live i{width:7px;height:7px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 6px var(--green);animation:pp 3}
+  .tstats .ts-cell{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .tstats .ts-cell .k{color:var(--faint);font-size:9.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase}
+  .tstats .ts-cell .v{color:var(--bright);font-size:13px;font-weight:700;white-space:nowrap}
+  .tstats .ts-cell .v .sub{color:var(--faint);font-weight:500;font-size:10.5px}
+  .tstats .ts-cell .v.hi{color:var(--accent)}
+  /* ============ FILE CARD (write/patch/edit) ============ */
+  .fcard{background:var(--code);border:1px solid var(--line);border-left:3px solid var(--orange);
+    border-radius:var(--radius);margin-bottom:8px;overflow:hidden}
+  .fcard .fh{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;
+    font:12px/1.4 var(--mono);user-select:none;list-style:none}
+  .fcard .fh::-webkit-details-marker{display:none}
+  .fcard .fh:hover{background:rgba(255,255,255,.03)}
+  .fcard .fh .fpath{color:var(--orange);font-weight:600;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;flex:1;min-width:0}
+  .fcard .fh .fstat{color:var(--faint);font-size:10.5px;white-space:nowrap;flex:none}
+  .fcard .fh .car{color:var(--faint);transition:transform .15s;display:flex;flex:none}
+  .fcard[open] .fh .car{transform:rotate(90deg)}
+  .fcard .fbody{padding:2px 0 10px;font:11.6px/1.6 var(--mono);max-height:340px;overflow:auto;color:#abb2bf}
+  .fl{display:flex;white-space:pre}
+  .fl .ln{color:#4b5263;width:38px;flex:none;text-align:right;padding-right:14px;user-select:none}
+  .fl .lc{white-space:pre-wrap;word-break:break-word;flex:1}
+  .fl.del{background:rgba(255,123,114,.10)}
+  .fl.del .lc{color:var(--red)} .fl.del .ln{color:rgba(255,123,114,.5)}
+  .fl.add{background:rgba(126,231,135,.08)}
+  .fl.add .lc{color:var(--green)} .fl.add .ln{color:rgba(126,231,135,.5)}
+  .tool .tstat{margin-left:auto;color:var(--faint);font:11px var(--mono);flex:none}
+  .tool .tres{margin-top:6px;width:100%}
+  .tool .tres summary{cursor:pointer;color:var(--faint);font:10.5px var(--mono);
+    text-transform:uppercase;letter-spacing:.5px;list-style:none;display:inline-block}
+  .tool .tres summary::-webkit-details-marker{display:none}
+  .tool .tres summary:hover{color:var(--muted)}
+  .tool .tresbody{margin:6px 0 2px;padding:8px 10px;background:var(--code);border:1px solid var(--line);
+    border-radius:6px;font:11px/1.5 var(--mono);color:#abb2bf;white-space:pre-wrap;word-break:break-word;
+    max-height:220px;overflow:auto}
+
   .typing{display:inline-flex;gap:4px;align-items:center;padding:4px 2px}
   .typing i{width:6px;height:6px;background:var(--green);border-radius:50%;animation:tp 1s infinite}
   .typing i:nth-child(2){animation-delay:.15s}
@@ -319,6 +362,10 @@ const API="https://10.71.71.112:8443";
 const SRC_LABEL={desktop:"Desktop",telegram:"Telegram",cron:"Cron",api_server:"This app",web_client:"This app",cli:"CLI"};
 const SRC_ORDER={api_server:0,web_client:0,desktop:1,telegram:2,cron:3,cli:4};
 const timeAgo=ts=>{ if(!ts)return""; const d=Date.now()-new Date(ts).getTime(); if(d<0)return""; const m=Math.floor(d/6e4); if(m<1)return"now"; if(m<60)return m+"m"; const h=Math.floor(m/60); if(h<24)return h+"h"; return Math.floor(h/24)+"d"; };
+const fmtTok=n=>{n=Math.max(0,Math.round(n||0));return n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":String(n);};
+const fmtDur=s=>{s=Math.max(0,s||0);if(s<1)return Math.round(s*1000)+"ms";if(s<60)return s.toFixed(1)+"s";const m=Math.floor(s/60);return m+"m "+Math.round(s%60)+"s";};
+const fmtT=t=>{t=Math.max(0,t||0);if(t<60)return Math.floor(t)+"s";const h=Math.floor(t/3600),m=Math.floor(t%3600/60),s2=Math.floor(t%60);return (h?h+"h ":"")+(m?m+"m ":"")+s2+"s";};
+const estTok=s=>Math.round((s||0)/3.4);
 const lsGet=(k,d)=>{ try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;} };
 const lsSet=(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} };
 const I={
@@ -430,6 +477,72 @@ function Reasoning({text,open,caret}){
     <div className="rb">{text}{caret?<span className="caret" style={{background:'var(--purple)'}}/>:null}</div>
   </details>;
 }
+function FileBody({text,diff}){
+  const lines=String(text||"").replace(/\n$/,"").split("\n");
+  return <>{lines.map((ln,i)=>{
+    let c="",body=ln;
+    if(diff){
+      if(ln[0]==="+"){c="add";body=ln.slice(1);}
+      else if(ln[0]==="-"){c="del";body=ln.slice(1);}
+      else if(ln.startsWith(" ")){body=ln.slice(1);}
+    }
+    return <div key={i} className={"fl "+c}><span className="ln">{c==="add"||c==="del"?"":i+1}</span><span className="lc">{body.length?body:" "}</span></div>;
+  })}</>;
+}
+function FileCard({tool,open}){
+  const name=tool.name;
+  const isWrite=name==="write_file",isPatch=name==="patch";
+  const a=tool.args||{};
+  const path=a.path||"";
+  let body="",stat="",diff=true;
+  if(isWrite){body=String(a.content||"");stat=body?body.split("\n").length+" lines":"";diff=false;}
+  else if(isPatch){
+    const ns=String(a.new_string!=null?a.new_string:""),os=String(a.old_string!=null?a.old_string:"");
+    if(String(a.patch||"").includes("*** Update File:")){body=String(a.patch);stat="v4a";diff=true;}
+    else if(os&&ns){body=os.split("\n").map(l=>"-"+l).join("\n")+"\n"+ns.split("\n").map(l=>"+"+l).join("\n");stat="replace";diff=true;}
+    else{body=ns||os;stat="edit";diff=false;}
+  }
+  if(!body&&!path)return null;
+  return <details className="fcard" open={open!==false}>
+    <summary className="fh">
+      <span className="car" dangerouslySetInnerHTML={{__html:I.car(11)}}></span>
+      <span className="fpath">{path||name}</span>
+      <span className="fstat">{isWrite?"write":isPatch?"edit":"file"} · {stat}</span>
+    </summary>
+    {body?<div className="fbody"><FileBody text={body} diff={diff}/></div>:null}
+  </details>;
+}
+function ToolRow({tool,streaming}){
+  const t=tool||{};const name=t.name||"";
+  if(name==="write_file"||name==="patch")return <FileCard tool={t} open={true}/>;
+  const res=t.result;
+  return <div className="tool">
+    <span className={t.running?'spin':'tick'}>{t.running?'':'✓'}</span>
+    <span className="tn">{name}</span>
+    {t.preview?<span className="tp">{t.preview}</span>:null}
+    {typeof t.dur==="number"?<span className="tstat">{t.dur.toFixed(1)}s</span>:null}
+    {t.err?<span className="tstat" style={{color:'var(--red)'}}>failed</span>:null}
+    {res?<details className="tres"><summary>result</summary><pre className="tresbody">{String(res)}</pre></details>:null}
+  </div>;
+}
+function StatsBar({streaming,st,reasonLen,textLen,toolMs,turnStart,nowTick,shownModel}){
+  void nowTick; // re-render tick while live
+  const show=streaming||st;
+  if(!show)return null;
+  const wallMs=streaming?Math.max(0,Date.now()-turnStart):st.wallMs;
+  const toolMsNow=streaming?toolMs:st.toolMs;
+  const modelMsNow=Math.max(0,wallMs-toolMsNow*1000);
+  const outTok=streaming?estTok(reasonLen+textLen):(st?st.genTok:0);
+  const spd=streaming?(modelMsNow>200&&outTok>0?outTok/(modelMsNow/1000):0):(st&&st.spd||0);
+  return <div className="tstats">
+    <span className="ts-live"><i/> {streaming?"streaming":"turn"}</span>
+    <div className="ts-cell"><span className="k">clock</span><span className="v">{fmtDur(wallMs/1000)}</span></div>
+    <div className="ts-cell"><span className="k">model time</span><span className="v hi">{fmtDur(modelMsNow/1000)} <span className="sub">{streaming?Math.round(toolMsNow)+" tool":""}</span></span></div>
+    <div className="ts-cell"><span className="k">tokens out</span><span className="v">{fmtTok(outTok)} <span className="sub">{streaming?"~":""}{spd>0?Math.round(spd)+" tok/s":""}</span></span></div>
+    <div className="ts-cell"><span className="k">tokens in</span><span className="v">{st?fmtTok(st.promptTok):"…"}</span></div>
+    <div className="ts-cell"><span className="k">model</span><span className="v" style={{color:'var(--muted)',fontWeight:600}}>{shownModel?shownModel.model:(st&&st.model)||""}</span></div>
+  </div>;
+}
 const MsgBubble=React.memo(function MsgBubble({msg,onSpeak,speaking,doCopy}){
   const streaming=msg.streaming;
   if(msg.kind==='user'){
@@ -442,10 +555,8 @@ const MsgBubble=React.memo(function MsgBubble({msg,onSpeak,speaking,doCopy}){
     </div></div>;
   }
   if(msg.tool){
-    return <div className="msg assistant"><div className="tool">
-      <span className={streaming?'spin':'tick'}>{streaming?'':'✓'}</span>
-      <span className="tn">{msg.tool}</span>
-      {msg.preview?<span className="tp">{msg.preview}</span>:null}
+    return <div className="msg assistant"><div className="bubble" style={{maxWidth:"84%"}}>
+      <ToolRow tool={{name:msg.tool,args:msg.args,running:!!streaming,preview:msg.preview,dur:msg.dur,err:msg.err}} streaming={streaming}/>
     </div></div>;
   }
   const ap=streaming?(msg.text?'text':'reasoning'):null;
@@ -466,9 +577,11 @@ const MsgBubble=React.memo(function MsgBubble({msg,onSpeak,speaking,doCopy}){
       {!streaming&&msg.text?<button className="copyb" onClick={()=>doCopy(msg.text)} title="Copy"><span dangerouslySetInnerHTML={{__html:I.copy(12)}}/>copy</button>:null}
     </div>
     {msg.reasoning?<Reasoning text={msg.reasoning} open={reasonOpen} caret={streaming&&reasonOpen}/>:null}
-    {msg.tools&&msg.tools.length?msg.tools.map((t,ti)=><div className="tool" key={ti}><span className={t.running?'spin':'tick'}>{t.running?'':'✓'}</span><span className="tn">{t.name}</span>{t.preview?<span className="tp">{t.preview}</span>:null}</div>):null}
-    {msg.text?<div className="bubble"><MD text={msg.text}/>{ap==='text'?<span className="caret"/>:null}</div>:null}
-    {showTyping?<div className="bubble"><span className="typing"><i/><i/><i/></span></div>:null}
+    <div className="bubble" style={{minHeight:"0"}}>
+      {msg.tools&&msg.tools.length?msg.tools.map((t,ti)=><ToolRow key={ti} tool={t} streaming={streaming}/>):null}
+      {msg.text?<span><MD text={msg.text}/>{ap==='text'?<span className="caret"/>:null}</span>:null}
+      {showTyping?<span className="typing"><i/><i/><i/></span>:null}
+    </div>
     {!streaming&&msg.text?<div className="acts"><button className={'speakb'+(speaking&&speaking.id===msg.id?' on':'')} onClick={()=>onSpeak(msg)} title="Read aloud" dangerouslySetInnerHTML={{__html:I.speaker(15)}}/></div>:null}
   </div>;
 });
@@ -518,7 +631,10 @@ function App(){
   const [draft,setDraft]=useState("");
   const [toast,setToast]=useState("");
   const [speaking,setSpeaking]=useState(null);
+  const [statsFinal,setStatsFinal]=useState(null);
+  const [nowTick,setNowTick]=useState(0);
   const abortRef=useRef(null); const scrollRef=useRef(null); const taRef=useRef(null);
+  const turnStart=useRef(0); const toolMs=useRef(0); const toolState=useRef({});
 
   const curEffort=cur?(effort[cur.id]||""):"";
   const curLock=cur?(locks[cur.id]||null):null;
@@ -552,10 +668,27 @@ function App(){
   const refreshMessages=useCallback(async(id)=>{
     try{
       const r=await fetch(API+"/api/sessions/"+id+"/messages?limit=500&order=oldest");const d=await r.json();
-      const mm=(d.data||[]).map((m,ix)=>({
-        id:m.id||('m'+ix),role:m.role,text:m.content||"",reasoning:m.reasoning||m.reasoning_content||"",tool:m.tool_name
-      })).filter(m=>m.text||m.reasoning||m.tool);
-      setMsgs(mm);setTimeout(scrollDown,60);
+      // History: assistant msgs carry tool_calls[].function.{name,arguments(JSON string)};
+      // separate role:"tool" msgs carry results, matched via tool_call_id.
+      const byId={};
+      (d.data||[]).forEach(m=>{ if(m.tool_name&&m.tool_call_id) byId[m.tool_call_id]={tool:m.tool_name,result:m.content||""}; });
+      const out=(d.data||[]).map((m,ix)=>{
+        const id=m.id||('m'+ix);
+        if(m.role==="tool")return null; // results merge into their assistant card
+        const rec={id,role:m.role,text:m.content||"",reasoning:m.reasoning||m.reasoning_content||""};
+        const tcs=m.tool_calls||[];
+        if(tcs.length){
+          rec.tools=tcs.map(tc=>{
+            let a=null;try{a=typeof tc.function.arguments==="string"?JSON.parse(tc.function.arguments):tc.function.arguments;}catch(_){a=tc.function.arguments;}
+            const rs=byId[tc.id]||byId[tc.call_id]||null;
+            const t={name:tc.function.name||"",args:a};
+            if(rs){t.result=rs.result||"";t.err=/\berror\b|\bfailed\b|denied|refused/i.test(rs.result||"");}
+            return t;
+          });
+        }
+        return rec;
+      }).filter(m=>m&&(m.text||m.reasoning||(m.tools&&m.tools.length)));
+      setMsgs(out);setTimeout(scrollDown,60);
     }catch(e){showToast("load messages: "+e.message);}
   },[showToast,scrollDown]);
 
@@ -613,6 +746,10 @@ function App(){
   },[speaking,showToast]);
   useEffect(()=>{if(!('speechSynthesis' in window))return;const load=()=>window.__voices=window.speechSynthesis.getVoices();load();window.speechSynthesis.onvoiceschanged=load;return ()=>window.speechSynthesis.cancel();},[]);
 
+  // Live re-render tick while a turn streams (drives the moving clock in the stats bar).
+  useEffect(()=>{if(!streaming)return;const t=setInterval(()=>setNowTick(x=>x+1),500);return ()=>clearInterval(t);},[streaming]);
+  // Reset the persistent stats panel when the active session changes.
+  useEffect(()=>{setStatsFinal(null);},[cur&&cur.id]);
   useEffect(()=>{loadModels();loadSessions();},[loadModels,loadSessions]);
   const doSend=useCallback(async()=>{
     const text=draft.trim();if(!text||streaming)return;
@@ -638,7 +775,8 @@ function App(){
       loadSessions().catch(()=>{});
     }
     setMsgs(m=>[...m,{id:'u'+Date.now(),role:"user",text}]);
-    setDraft("");setStreaming(true);setStreamText("");setReasoning("");setTools([]);
+    setDraft("");setStreaming(true);setStreamText("");setReasoning("");setTools([]);setStatsFinal(null);
+    turnStart.current=Date.now();toolMs.current=0;toolState.current={};
     setTimeout(scrollDown,30);
     const body={message:text};
     body.model_options={reasoning_effort: curEffort==="off"?"none":(curEffort||"none")};
@@ -665,21 +803,65 @@ function App(){
             else if(line.startsWith("data:"))data+=line.slice(5).trim();
           }
           if(!data)continue;let p;try{p=JSON.parse(data);}catch(_){continue;}
-          if(ev==="assistant.delta")setStreamText(t=>t+(p.delta||""));
+          if(ev==="assistant.delta"){
+            setStreamText(t=>t+(p.delta||""));
+          }
           else if(ev==="tool.progress"){
-            if(p.tool_name==="_thinking")setReasoning(t=>t+(p.delta||""));
-            else setTools(ts=>{const n=[...ts];const i=n.findIndex(x=>x.name===p.tool_name);
+            if(p.tool_name==="_thinking"){setReasoning(t=>t+(p.delta||""));}
+            else{setTools(ts=>{const n=[...ts];const i=n.findIndex(x=>x.name===p.tool_name&&!x.running);
               if(i<0)n.push({name:p.tool_name,running:true});else n[i]={...n[i],running:true,preview:p.preview};
+              return n;});}
+          }
+          else if(ev==="tool.started"){
+            const t0=Date.now();
+            toolState.current[p.tool_name]={t0,running:true,args:p.args||null};
+            setTools(ts=>{const n=[...ts];const i=n.findIndex(x=>x.name===p.tool_name&&!x.running);
+              if(i<0)n.push({name:p.tool_name,running:true,preview:p.preview,args:p.args||null});
+              else n[i]={...n[i],running:true,args:p.args||null,preview:p.preview};
               return n;});
+          }
+          else if(ev==="tool.completed"||ev==="tool.failed"){
+            const st=toolState.current[p.tool_name];
+            if(st&&st.running){
+              const dur=Math.max(0,(Date.now()-st.t0)/1000);
+              st.running=false;st.err=ev==="tool.failed";
+              toolMs.current+=dur*1000;
+            }
+            setTools(ts=>ts.map(t=>t.name===p.tool_name?{...t,running:false,dur:(st&&st.dur!=null)?st.dur:t.dur,err:ev==="tool.failed"}:t));
           }
           else if(ev==="assistant.completed"){
             if(p.content)setStreamText(p.content);
             setTools(ts=>ts.map(t=>({...t,running:false})));
           }
           else if(ev==="run.completed"){
+            const u=p.usage||{};
+            const inTot=u.input_tokens||0,outTot=u.output_tokens||0;
+            // input_tokens = full prompt the model processed this turn (system +
+            //   history + message) — already context-cumulative, so use raw.
+            // output_tokens = total the model generated this turn (thinking + tool
+            //   calls + text) — per-turn, so use raw (NOT a diff).
+            const promptTok=inTot;
+            const genTok=outTot;
+            const wallMs=Math.max(0,Date.now()-turnStart.current);
+            const toolMsTotal=Math.round(toolMs.current);
+            const modelMs=Math.max(0,wallMs-toolMsTotal);
+            const toolCount=Object.keys(toolState.current).length;
+            const modelMeta=(p.runtime&&p.runtime.model)||"";
+            setStatsFinal({wallMs,toolMs:toolMsTotal/1000,modelMs,promptTok,genTok,
+              spd:modelMs>200?genTok/(modelMs/1000):0,toolCount,model:modelMeta});
             if(p.messages){
-              setMsgs(m=>[...m.filter(x=>x.id!=='__stream'),
-                ...p.messages.map((mm,ix)=>({id:mm.id||('m'+ix),role:mm.role,text:mm.content||"",reasoning:mm.reasoning||mm.reasoning_content||"",tool:mm.tool_name}))]);
+              setMsgs(m=>{
+                const clean=m.filter(x=>x.id!=='__stream');
+                const mapped=p.messages.map((mm,ix)=>{
+                  const rec={id:mm.id||('m'+ix),role:mm.role,text:mm.content||"",reasoning:mm.reasoning||mm.reasoning_content||"",tool:mm.tool_name};
+                  if(mm.tool_name){
+                    const st=toolState.current[mm.tool_name];
+                    if(st){rec.args=st.args;if(st.dur!=null)rec.dur=st.dur;if(st.err)rec.err=true;}
+                  }
+                  return rec;
+                });
+                return [...clean,...mapped];
+              });
             }else setMsgs(m=>[...m,{id:'a'+Date.now(),role:"assistant",text:p.content||streamText,reasoning}]);
             setStreamText("");setReasoning("");setTools([]);
             loadSessions().catch(()=>{});
@@ -788,6 +970,8 @@ function App(){
       </div>
       <div className="chat" ref={scrollRef}>
         <div className="chat-inner">
+          <StatsBar streaming={streaming} st={statsFinal} reasonLen={reasoning.length} textLen={streamText.length}
+            toolMs={toolMs.current/1000} turnStart={turnStart.current} nowTick={nowTick} shownModel={shownModel}/>
           {!cur?(
             <div className="empty-main">
               <div className="big">H</div>
