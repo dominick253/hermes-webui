@@ -619,8 +619,21 @@ function App(){
     stopSpeak();
     let s=cur;
     if(!s){
-      const r=await fetch(API+"/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source:"web_client"})});
-      const d=await r.json();s=d.session;setCur(s);
+      let d;
+      try{
+        const r=await fetch(API+"/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source:"web_client"})});
+        if(!r.ok){let m2="HTTP "+r.status;try{const e=await r.json();m2=e.error||m2;}catch(_){}throw new Error(m2);}
+        d=await r.json();
+      }catch(e){
+        setMsgs(m=>[...m,{id:'e'+Date.now(),role:"assistant",text:"",err:"Could not create session: "+e.message}]);
+        return;
+      }
+      s=d.session;
+      if(!s){
+        setMsgs(m=>[...m,{id:'e'+Date.now(),role:"assistant",text:"",err:"Could not create session: bad response"}]);
+        return;
+      }
+      setCur(s);
       if(!s.title)fetch(API+"/api/sessions/"+s.id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:text.slice(0,48)})}).catch(()=>{});
       loadSessions().catch(()=>{});
     }
@@ -634,7 +647,13 @@ function App(){
       const r=await fetch(API+"/api/sessions/"+s.id+"/chat/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:ctrl.signal});
       if(!r.ok){let m2="HTTP "+r.status;try{const e=await r.json();m2=e.error||m2;}catch(_){}throw new Error(m2);}
       const reader=r.body.getReader();const dec=new TextDecoder();let buf="";
-      while(true){
+      // Inactivity watchdog: if no chunk arrives for 150s, abort so a dead
+      // stream can't leave the UI stuck in "streaming" forever.
+      let idleTimer=null,finished=false;
+      const armIdle=()=>{if(idleTimer)clearTimeout(idleTimer);idleTimer=setTimeout(()=>{try{ctrl.abort();}catch(_){}},150000);};
+      armIdle();
+      while(!finished){
+        armIdle();
         const {value,done}=await reader.read();if(done)break;
         buf+=dec.decode(value,{stream:true});
         let idx;
@@ -664,11 +683,15 @@ function App(){
             }else setMsgs(m=>[...m,{id:'a'+Date.now(),role:"assistant",text:p.content||streamText,reasoning}]);
             setStreamText("");setReasoning("");setTools([]);
             loadSessions().catch(()=>{});
+            finished=true;
+            try{reader.cancel().catch(()=>{});}catch(_){}
+            break;
           }
           else if(ev==="error")setMsgs(m=>[...m,{id:'e'+Date.now(),role:"assistant",text:"",err:p.message}]);
         }
         scrollDown();
       }
+      if(idleTimer)clearTimeout(idleTimer);
       if(streamText||reasoning)setMsgs(m=>[...m,{id:'a'+Date.now(),role:"assistant",text:streamText,reasoning}]);
     }catch(e){
       if(e.name!=="AbortError")setMsgs(m=>[...m,{id:'e'+Date.now(),role:"assistant",text:"",err:e.message}]);
@@ -810,7 +833,7 @@ function App(){
             <textarea ref={taRef} rows={1} placeholder={cur?"Message Hermes…":"Start a new chat to begin"}
               value={draft} onChange={e=>setDraft(e.target.value)} onKey={onKey} disabled={streaming}/>
             <button className={"send"+(streaming?" stop":"")}
-              onClick={streaming?(()=>{if(abortRef.current)abortRef.current.abort();}):doSend}
+              onClick={streaming?(()=>{if(abortRef.current)abortRef.current.abort();else{setStreaming(false);setStreamText("");setReasoning("");setTools([]);}}):doSend}
               disabled={!cur&&!streaming} title={streaming?"Stop":"Send"}
               dangerouslySetInnerHTML={{__html:streaming?I.stop(16):I.send(17)}}/>
           </div>
