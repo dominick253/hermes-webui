@@ -612,6 +612,27 @@ function ModelModal({items,curKey,onPick,onClose}){
   </div>;
 }
 
+// Class-based error boundary: React 18 has no functional equivalent for
+// catching render-phase throws, and an uncaught throw unmounts the whole
+// root (black screen). Wrap <App/> so ANY render bug degrades to a recoverable
+// message instead of wiping the UI.
+class ErrorBoundary extends React.Component{
+  constructor(p){super(p);this.state={err:null};}
+  static getDerivedStateFromError(e){return {err:e};}
+  render(){
+    if(this.state.err){
+      return <div className="errbox" style={{margin:"16px 16px 0"}}>
+        <strong>Render error — caught (app did not go black):</strong><br/>
+        <span style={{fontFamily:"var(--mono)",fontSize:12}}>{String(this.state.err&&this.state.err.message||this.state.err)}</span><br/>
+        <div style={{marginTop:10,display:"flex",gap:8}}>
+          <button className="btn ghost" style={{padding:"6px 12px",fontSize:12}} onClick={()=>this.setState({err:null})}>Retry render</button>
+          <button className="btn" style={{padding:"6px 12px",fontSize:12}} onClick={()=>{try{localStorage.removeItem("hermes.efforts");localStorage.removeItem("hermes.locks");}catch(_){}this.setState({err:null});window.location.reload();}}>Reset UI state &amp; reload</button>
+        </div>
+      </div>;
+    }
+    return this.props.children;
+  }
+}
 function App(){
   const [sessions,setSessions]=useState([]);
   const [cur,setCur]=useState(null);
@@ -636,7 +657,8 @@ function App(){
   const abortRef=useRef(null); const scrollRef=useRef(null); const taRef=useRef(null);
   const turnStart=useRef(0); const toolMs=useRef(0); const toolState=useRef({});
 
-  const curEffort=cur?(effort[cur.id]||""):"";
+  const effDefault=effort["__default__"]||"";
+  const curEffort=(cur&&(effort[cur.id]||null))||effDefault;
   const curLock=cur?(locks[cur.id]||null):null;
 
   const showToast=useCallback((m)=>{setToast(m);setTimeout(()=>setToast(""),2800);},[]);
@@ -881,7 +903,12 @@ function App(){
   },[draft,streaming,cur,curEffort,stopSpeak,loadSessions,scrollDown]);
 
   const setEffortV=useCallback((e)=>{
-    setEffort(prev=>{const ne={...prev,[cur.id]:e};lsSet("hermes.efforts",ne);return ne;});
+    // Never deref cur.id inside the state updater (runs at render time →
+    // a null cur there threw and blacked out the whole app). Resolve the key
+    // now, in the click handler; if no session is open yet, persist under a
+    // stable default key that the first message will inherit.
+    const key=cur?cur.id:"__default__";
+    setEffort(prev=>{const ne={...prev,[key]:e};lsSet("hermes.efforts",ne);return ne;});
   },[cur]);
 
   useEffect(()=>{
@@ -1014,11 +1041,11 @@ function App(){
           </div>
           <div className="cbox">
             <span className="cprompt">❯</span>
-            <textarea ref={taRef} rows={1} placeholder={cur?"Message Hermes…":"Start a new chat to begin"}
+            <textarea ref={taRef} rows={1} placeholder={cur?"Message Hermes…":"Start a new chat — your first message creates the session"}
               value={draft} onChange={e=>setDraft(e.target.value)} onKey={onKey} disabled={streaming}/>
             <button className={"send"+(streaming?" stop":"")}
               onClick={streaming?(()=>{if(abortRef.current)abortRef.current.abort();else{setStreaming(false);setStreamText("");setReasoning("");setTools([]);}}):doSend}
-              disabled={!cur&&!streaming} title={streaming?"Stop":"Send"}
+              disabled={streaming?false:!draft.trim()} title={streaming?"Stop":"Send"}
               dangerouslySetInnerHTML={{__html:streaming?I.stop(16):I.send(17)}}/>
           </div>
         </div>
@@ -1034,7 +1061,7 @@ function App(){
   </div>
   );
 }
-ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App/></ErrorBoundary>);
 </script>
 </body>
 </html>
