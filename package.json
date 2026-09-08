@@ -1,0 +1,13 @@
+{
+  "name": "hermes-webui",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser web UI for the Hermes Agent gateway api_server — single-file React SPA + stdlib SSE proxy.",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@babel/preset-react": "^7.24.0"
+  }
+}

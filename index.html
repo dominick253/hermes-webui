@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<meta name="theme-color" content="#0b0d10" />
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
+<link rel="icon" type="image/png" sizes="512x512" href="/favicon-512.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+<link rel="manifest" href="/site.webmanifest" />
+<title>Hermes</title>
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#12151a; --panel2:#171b22; --panel3:#1d232c;
+    --line:#232a33; --line2:#2c3542;
+    --fg:#e7ecf2; --muted:#8b97a7; --faint:#5d6878;
+    --accent:#5b8cff; --accent2:#7aa2ff; --accent-dim:rgba(91,140,255,.14);
+    --user:#1d3a6b; --ok:#3ecf8e; --warn:#f5a623; --err:#ff6b6b;
+    --code:#0e1116; --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; overscroll-behavior:none;}
+  #root{height:100%}
+  a{color:var(--accent)}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:#2a3340;border-radius:8px}
+  ::-webkit-scrollbar-thumb:hover{background:#37424f}
+  button{font-family:inherit}
+  input,textarea,select{font-family:inherit}
+
+  .app{height:100%;display:flex;background:var(--bg);
+    padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+
+  /* ============ SIDEBAR ============ */
+  .side{width:292px;flex:none;display:flex;flex-direction:column;
+    background:var(--panel);border-right:1px solid var(--line)}
+  .side-head{display:flex;align-items:center;gap:10px;padding:14px 14px 10px}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:800;font-size:16px;letter-spacing:.2px}
+  .logo .mark{width:26px;height:26px;border-radius:8px;flex:none;
+    background:linear-gradient(135deg,var(--accent),#8b5cf6);
+    display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px}
+  .newchat{margin-left:auto;display:flex;align-items:center;gap:7px;
+    background:var(--accent);border:none;color:#fff;font-weight:600;font-size:13.5px;
+    padding:8px 13px;border-radius:10px;cursor:pointer}
+  .newchat:hover{background:var(--accent2)}
+  .newchat svg{width:14px;height:14px}
+  .searchwrap{padding:0 14px 10px;position:relative}
+  .searchwrap svg{position:absolute;left:24px;top:9px;width:14px;height:14px;color:var(--faint)}
+  .search{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:8px 12px 8px 32px;color:var(--fg);font-size:13.5px;outline:none}
+  .search::placeholder{color:var(--faint)}
+  .search:focus{border-color:var(--line2)}
+  .side-list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:2px 8px 12px}
+  .grp{color:var(--muted);font-size:10.5px;font-weight:800;letter-spacing:.8px;
+    text-transform:uppercase;padding:12px 8px 5px}
+  .item{display:flex;gap:10px;padding:10px 10px;border-radius:10px;cursor:pointer;
+    position:relative;transition:background .12s}
+  .item:hover{background:var(--panel2)}
+  .item.on{background:var(--accent-dim)}
+  .item.on::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;
+    border-radius:3px;background:var(--accent)}
+  .item .body{flex:1;min-width:0}
+  .item .trow{display:flex;align-items:baseline;gap:8px}
+  .item .name{font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;flex:1}
+  .item .ago{color:var(--faint);font-size:11px;flex:none}
+  .item .prev{color:var(--muted);font-size:12px;margin-top:2px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .item .meta{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+  .pill{background:var(--panel2);border:1px solid var(--line);border-radius:20px;
+    padding:1px 8px;font-weight:600;white-space:nowrap}
+  .item .del{position:absolute;right:8px;bottom:8px;background:transparent;border:none;
+    color:var(--faint);cursor:pointer;padding:4px;border-radius:6px;display:none}
+  .item:hover .del{display:block}
+  .item .del:hover{color:var(--err)}
+  .side-foot{border-top:1px solid var(--line);padding:10px 14px;
+    display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}
+  .side-foot .pulse{width:8px;height:8px;border-radius:50%;background:var(--ok);
+    box-shadow:0 0 7px var(--ok);flex:none}
+  .side-foot .m{font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis}
+  .side-foot .p{color:var(--faint);white-space:nowrap}
+  .backdrop{display:none}
+
+  /* ============ MAIN ============ */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .bar{display:flex;align-items:center;gap:10px;padding:11px 16px;
+    background:var(--panel);border-bottom:1px solid var(--line)}
+  .bar .title{font-weight:700;font-size:15.5px;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;flex:1;min-width:0}
+  .modelpill{display:flex;align-items:center;gap:8px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:10px;padding:7px 11px;cursor:pointer;
+    color:var(--fg);font-size:13px;font-weight:600;flex:none}
+  .modelpill:hover{border-color:var(--line2)}
+  .modelpill .mdot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none}
+  .modelpill .mp{color:var(--faint);font-weight:500;font-size:12px}
+  .modelpill svg{width:13px;height:13px;color:var(--faint)}
+  .btn{background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+    border-radius:10px;padding:8px 12px;font-size:13.5px;cursor:pointer;line-height:1;
+    transition:background .15s,border-color .15s;flex:none}
+  .btn:hover{border-color:var(--line2)}
+  .btn:active{background:#1f2630}
+  .btn.ghost{background:transparent}
+  .btn.icon{padding:8px;display:flex;align-items:center;justify-content:center}
+  .btn.icon svg{width:17px;height:17px}
+  .iconbtn{background:transparent;border:none;color:var(--muted);cursor:pointer;padding:7px;
+    border-radius:8px;display:none;align-items:center;justify-content:center;flex:none}
+  .iconbtn:hover{color:var(--fg);background:var(--panel2)}
+  .iconbtn svg{width:19px;height:19px}
+
+  /* chat */
+  .chat{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    padding:20px 18px 10px;scroll-behavior:auto}
+  .chat-inner{max-width:820px;margin:0 auto}
+  .msg{display:flex;margin:0 0 18px}
+  .msg.user{flex-direction:column;align-items:flex-end}
+  .msg.assistant{display:block}
+  .bubble{max-width:82%;padding:10px 13px 15px;border-radius:16px;font-size:14.5px;
+    white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}
+  .msg.user .bubble{background:var(--user);border-bottom-right-radius:5px}
+  .ahead{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .ahead .who{display:flex;align-items:center;gap:7px;font-weight:700;font-size:12.5px}
+  .ahead .who .mark{width:20px;height:20px;border-radius:6px;
+    background:linear-gradient(135deg,var(--accent),#8b5cf6);display:flex;
+    align-items:center;justify-content:center;color:#fff;font-size:10.5px;flex:none}
+  .ahead .sub{color:var(--faint);font-size:11.5px}
+  .copyb{background:transparent;border:none;color:var(--faint);cursor:pointer;
+    padding:3px 5px;border-radius:6px;font-size:11.5px;display:flex;align-items:center;gap:5px}
+  .copyb:hover{color:var(--fg);background:var(--panel2)}
+  .copyb svg{width:12px;height:12px}
+  .mcol{max-width:82%;display:flex;flex-direction:column;align-items:flex-end}
+  .mcol .bubble{max-width:100%}
+  .acts{display:flex;gap:2px;margin-top:4px}
+  .speakb{background:transparent;border:none;color:var(--faint);cursor:pointer;
+    padding:5px;border-radius:7px;display:flex;align-items:center;justify-content:center}
+  .speakb:hover{color:var(--fg);background:var(--panel2)}
+  .speakb svg{width:15px;height:15px}
+  .speakb.on{color:var(--accent);background:var(--accent-dim)}
+  .speakb.on svg{animation:tp 1s infinite}
+  .msg.assistant .bubble{background:var(--panel2);border:1px solid var(--line);
+    border-bottom-left-radius:5px;max-width:100%}
+  .reasoning{background:var(--code);border:1px solid var(--line);border-radius:10px;
+    margin-bottom:8px;overflow:hidden}
+  .reasoning .rh{display:flex;align-items:center;gap:7px;padding:8px 12px;cursor:pointer;
+    color:var(--warn);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;
+    user-select:none}
+  .reasoning .rh .car{margin-left:auto;color:var(--faint);transition:transform .15s;
+    display:flex}
+  .reasoning[open] .rh .car{transform:rotate(90deg)}
+  .reasoning .rb{padding:2px 12px 10px;font-size:12.5px;color:var(--muted);
+    white-space:pre-wrap;max-height:220px;overflow-y:auto}
+  .reasoning summary::-webkit-details-marker{display:none}
+  .tool{display:flex;align-items:center;gap:8px;background:var(--code);
+    border:1px solid var(--line);border-radius:10px;padding:7px 11px;margin-bottom:8px;
+    font-size:12.5px;color:var(--muted)}
+  .tool .tn{color:var(--accent2);font-weight:600}
+  .tool .spin{width:12px;height:12px;border:2px solid #2a3340;border-top-color:var(--accent);
+    border-radius:50%;animation:sp .8s linear infinite;flex:none}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .codeblk{background:var(--code);border:1px solid var(--line);border-radius:10px;
+    padding:11px 13px;margin:9px 0;font:12.5px/1.55 ui-monospace,Menlo,Consolas,monospace;
+    overflow-x:auto;white-space:pre;color:#cdd6e0}
+  .typing{display:inline-flex;gap:4px;align-items:center;padding:4px 2px}
+  .typing i{width:6px;height:6px;background:var(--muted);border-radius:50%;animation:tp 1s infinite}
+  .typing i:nth-child(2){animation-delay:.15s}
+  .typing i:nth-child(3){animation-delay:.3s}
+  @keyframes tp{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+  .errbox{background:#2a1a1c;border:1px solid #4a2326;color:var(--err);
+    border-radius:10px;padding:9px 12px;font-size:13px;margin-bottom:10px}
+  .empty-main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:8px;color:var(--muted);padding:40px}
+  .empty-main .big{width:52px;height:52px;border-radius:16px;
+    background:linear-gradient(135deg,var(--accent),#8b5cf6);display:flex;align-items:center;
+    justify-content:center;color:#fff;font-size:24px;margin-bottom:8px}
+  .empty-main h2{color:var(--fg);font-size:20px;margin:0}
+  .empty-main p{margin:0;font-size:14px}
+
+  /* composer */
+  .composer{padding:10px 16px 14px;background:var(--panel);border-top:1px solid var(--line)}
+  .composer-inner{max-width:820px;margin:0 auto}
+  .thinkrow{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .label{color:var(--faint);font-size:11px;font-weight:800;text-transform:uppercase;
+    letter-spacing:.7px;flex:none}
+  .seg{display:flex;background:var(--panel2);border:1px solid var(--line);
+    border-radius:9px;padding:2.5px;gap:2px}
+  .seg button{background:transparent;border:none;color:var(--muted);font-size:12px;
+    padding:4.5px 11px;border-radius:7px;cursor:pointer;font-weight:600}
+  .seg button.on{background:var(--accent);color:#fff}
+  .cbox{display:flex;gap:9px;align-items:flex-end;background:var(--panel2);
+    border:1px solid var(--line);border-radius:16px;padding:8px 8px 8px 14px;
+    transition:border-color .15s}
+  .cbox:focus-within{border-color:var(--accent)}
+  .cbox textarea{flex:1;resize:none;background:transparent;color:var(--fg);
+    border:none;outline:none;font:14.5px/1.45 inherit;max-height:170px;padding:4px 0}
+  .cbox textarea::placeholder{color:var(--faint)}
+  .send{flex:none;width:40px;height:40px;border-radius:12px;background:var(--accent);
+    border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;
+    transition:background .15s}
+  .send:hover{background:var(--accent2)}
+  .send:disabled{background:#2a3340;color:var(--faint);cursor:default}
+  .send.stop{background:var(--err)}
+  .send svg{width:17px;height:17px}
+
+  /* modal */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;
+    display:flex;align-items:flex-start;justify-content:center;padding:8vh 16px 16px;
+    backdrop-filter:blur(3px)}
+  .modal{background:var(--panel);border:1px solid var(--line2);border-radius:16px;
+    width:100%;max-width:480px;max-height:78vh;display:flex;flex-direction:column;
+    box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  .modal h3{margin:0;padding:16px 18px 4px;font-size:16px}
+  .modal .msub{padding:0 18px 12px;color:var(--muted);font-size:12.5px}
+  .msearch{margin:0 18px 10px;position:relative}
+  .msearch svg{position:absolute;left:11px;top:9px;width:14px;height:14px;color:var(--faint)}
+  .msearch input{width:100%;background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:8px 12px 8px 32px;color:var(--fg);font-size:13.5px;outline:none}
+  .msearch input:focus{border-color:var(--line2)}
+  .mlist{flex:1;overflow-y:auto;padding:0 10px 14px}
+  .mgrp{color:var(--faint);font-size:10.5px;font-weight:800;letter-spacing:.8px;
+    text-transform:uppercase;padding:12px 8px 5px}
+  .mitem{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;
+    cursor:pointer}
+  .mitem:hover{background:var(--panel2)}
+  .mitem .mn{flex:1;font-size:13.5px;font-weight:500;min-width:0;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mitem .cur{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none;
+    box-shadow:0 0 6px var(--ok)}
+  .mitem .chk{color:var(--accent);font-weight:800;flex:none}
+  .mitem.sel{background:var(--accent-dim)}
+  .mfoot{border-top:1px solid var(--line);padding:12px 18px;display:flex;justify-content:flex-end}
+  .mfoot button{background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+    border-radius:10px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer}
+
+  .toast{position:fixed;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));
+    transform:translateX(-50%);background:var(--panel3);border:1px solid var(--line2);
+    color:var(--fg);color:var(--fg);padding:10px 16px;border-radius:12px;font-size:13px;z-index:200;
+    box-shadow:0 8px 30px rgba(0,0,0,.5);max-width:90vw}
+  .spinbig{width:26px;height:26px;border:3px solid #2a3340;border-top-color:var(--accent);
+    border-radius:50%;animation:sp .8s linear infinite;margin:30px auto}
+  .skeleton{height:14px;border-radius:6px;background:linear-gradient(90deg,var(--panel2) 25%,var(--panel3) 50%,var(--panel2) 75%);
+    background-size:200% 100%;animation:sh 1.2s infinite;margin:10px 10px}
+  @keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+  @media (max-width:860px){
+    .side{position:fixed;left:0;top:0;bottom:0;z-index:90;transform:translateX(-102%);
+      box-shadow:10px 0 40px rgba(0,0,0,.5);width:288px}
+    .side.open{transform:translateX(0)}
+    .backdrop{display:block;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:80;
+      opacity:0;pointer-events:none;transition:opacity .2s}
+    .backdrop.show{opacity:1;pointer-events:auto}
+    .iconbtn{display:flex}
+    .modelpill .mp{display:none}
+    .item .del{display:block;opacity:.45}
+    .bubble{max-width:92%}
+  }
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback} = React;
+const API = location.protocol + '//' + location.host;
+
+async function j(path, opts={}){
+  const r = await fetch(API+path, {headers:{"Content-Type":"application/json"}, ...opts});
+  if(!r.ok){
+    let m = "HTTP "+r.status;
+    try{const e=await r.json(); m = e.error||e.detail||m;}catch(_){}
+    throw new Error(m);
+  }
+  return r.json();
+}
+const timeAgo = ts => {
+  if(!ts) return "";
+  const s = Math.floor(Date.now()/1000 - ts);
+  if(s<60) return "now"; if(s<3600) return Math.floor(s/60)+"m";
+  if(s<86400) return Math.floor(s/3600)+"h"; return Math.floor(s/86400)+"d";
+};
+const lsGet = (k, d) => { try{ const v = localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(_){ return d; } };
+const lsSet = (k, v) => { try{ localStorage.setItem(k, JSON.stringify(v)); }catch(_){} };
+
+function renderText(t){
+  if(!t) return null;
+  const parts = []; let re = /```(\w*)\n?([\s\S]*?)```/g; let last=0; let m; let k=0;
+  while((m=re.exec(t))){
+    if(m.index>last) parts.push(inline(t.slice(last,m.index),k++));
+    parts.push(React.createElement("div",{key:"c"+k,className:"codeblk"},m[2].replace(/\n$/,"")));
+    last = re.lastIndex;
+  }
+  if(last<t.length) parts.push(inline(t.slice(last),k++));
+  return parts;
+}
+function inline(s,k){
+  return s.split(/(\*\*[^*]+\*\*|`[^`]+`)/).map((seg,i)=>{
+    if(seg.startsWith("**")&&seg.endsWith("**")) return React.createElement("b",{key:k+"-"+i},seg.slice(2,-2));
+    if(seg.startsWith("`")&&seg.endsWith("`")) return React.createElement("code",{key:k+"-"+i,style:{background:"#0e1116",padding:"1px 5px",borderRadius:5,fontSize:"0.92em"}},seg.slice(1,-1));
+    return seg;
+  });
+}
+
+// ---- icons ----
+const Ic = {
+  menu:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>,
+  plus:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>,
+  search:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>,
+  back:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M15 18l-6-6 6-6"/></svg>,
+  refresh:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/></svg>,
+  chev:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M6 9l6 6 6-6"/></svg>,
+  copy:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>,
+  speaker:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>,
+  trash:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 1 2 2h6a2 2 0 0 0 2-2l1-12M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>,
+  send:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>,
+  stop:<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>,
+  bolt:<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"/></svg>,
+  close:<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>,
+};
+const SRC_LABEL = {desktop:"Desktop", telegram:"Telegram", cron:"Cron", api_server:"This app", web_client:"This app", cli:"CLI"};
+const SRC_ORDER = {api_server:0, web_client:0, desktop:1, telegram:2, cron:3, cli:4};
+
+function App(){
+  const [sessions,setSessions] = useState([]);
+  const [loading,setLoading] = useState(true);
+  const [cur,setCur] = useState(null);
+  const [msgs,setMsgs] = useState([]);
+  const [draft,setDraft] = useState("");
+  const [streaming,setStreaming] = useState(false);
+  const [streamText,setStreamText] = useState("");
+  const [reasoning,setReasoning] = useState("");
+  const [tools,setTools] = useState([]);
+  const [effort,setEffort] = useState("");
+  const [toast,setToast] = useState("");
+  const [sideOpen,setSideOpen] = useState(false);
+  const [query,setQuery] = useState("");
+  const [modelModal,setModelModal] = useState(false);
+  const [modelOpts,setModelOpts] = useState(null);   // raw /api/model/options
+  const [locks,setLocks] = useState(()=>lsGet("hermes.locks",{}));   // sessionId -> {model,provider}
+  const [efforts,setsEfforts] = useState(()=>lsGet("hermes.efforts",{}));
+  const abortRef = useRef(null);
+  const scrollRef = useRef(null);
+  const taRef = useRef(null);
+
+  const showToast = useCallback((m)=>{ setToast(m); setTimeout(()=>setToast(""),2800); },[]);
+  const scrollDown = useCallback(()=>{ const el=scrollRef.current; if(el) el.scrollTop=el.scrollHeight; },[]);
+
+  // ---- models inventory ----
+  const loadModels = async ()=>{
+    try{
+      const d = await j("/api/model/options");
+      setModelOpts(d);
+    }catch(e){ /* non-fatal */ }
+  };
+  useEffect(()=>{ loadModels(); },[]);
+
+  // flattened model list, local providers first
+  const modelList = React.useMemo(()=>{
+    if(!modelOpts) return {items:[], def:null};
+    const curSlug = modelOpts.provider, curModel = modelOpts.model;
+    const items = [];
+    for(const p of modelOpts.providers){
+      if(!p.authenticated || !p.models || p.models.length===0) continue;
+      for(const m of p.models){
+        items.push({provider:p.slug, providerName:p.name, model:m,
+          key:p.slug+"|"+m, isCurrent: p.slug===curSlug && m===curModel,
+          local: ["intel","intel-2","amd","title"].includes(p.slug)});
+      }
+    }
+    const def = items.find(i=>i.isCurrent) || items[0] || null;
+    const local = items.filter(i=>i.local);
+    const rest = items.filter(i=>!i.local);
+    return {items:[...local,...rest], def};
+  },[modelOpts]);
+
+  const curLock = cur ? locks[cur.id]||null : null;
+  const shownModel = curLock
+    ? {model:curLock.model, provider:curLock.provider, name:(modelList.items.find(i=>i.key===curLock.provider+"|"+curLock.model)||{}).providerName||curLock.provider}
+    : (modelOpts ? {model:modelOpts.model, provider:modelOpts.provider,
+        name:(modelList.items.find(i=>i.isCurrent)||{}).providerName||modelOpts.provider, isDefault:true} : null);
+
+  const loadSessions = async ()=>{
+    const d = await j(`/api/sessions?limit=120&order=latest`);
+    setSessions(d.data||[]);
+  };
+  useEffect(()=>{ loadSessions().catch(e=>showToast(e.message)).finally(()=>setLoading(false)); },[]);
+
+  const openSession = async (s, e)=>{
+    if(e) e.stopPropagation();
+    stopSpeak();
+    setCur(s); setMsgs([]); setSideOpen(false);
+    setEffort(efforts[s.id]||"");
+    try{
+      const d = await j(`/api/sessions/${s.id}/messages?limit=500&order=oldest`);
+      const mm = (d.data||[]).map(m=>({
+        role:m.role, content:m.content||"", reasoning:m.reasoning||m.reasoning_content||"",
+        tool:m.tool_name, kind:m.display_kind, id:m.id, ts:m.created_at||m.timestamp
+      })).filter(m=>m.content||m.reasoning||m.tool);
+      setMsgs(mm); setTimeout(scrollDown,60);
+    }catch(err){ showToast("load messages: "+err.message); }
+  };
+
+  const newSession = async ()=>{
+    try{
+      const d = await j("/api/sessions", {method:"POST", body:JSON.stringify({source:"web_client"})});
+      const s = d.session;
+      stopSpeak();
+      setCur(s); setMsgs([]); setSideOpen(false); setEffort("");
+      loadSessions().catch(()=>{});
+      if(taRef.current) setTimeout(()=>taRef.current.focus(),50);
+    }catch(e){ showToast("new session: "+e.message); }
+  };
+
+  const applyModel = async (s, sel)=>{
+    if(!sel) return;
+    // send model only — the backend resolves the route; sending a provider slug
+    // causes a "confirmed model lock runtime mismatch" when the route resolves
+    // to a different provider id.
+    const r = await j(`/api/sessions/${s.id}/model`,
+      {method:"POST", body:JSON.stringify({model:sel.model})});
+    const nl = {...locks, [s.id]:{model:sel.model, provider:sel.provider}}; setLocks(nl); lsSet("hermes.locks", nl);
+    return r;
+  };
+
+  const doSend = async ()=>{
+    const text = draft.trim(); if(!text||streaming) return;
+    stopSpeak();
+    let s = cur;
+    if(!s){
+      const d = await j("/api/sessions",{method:"POST",body:JSON.stringify?JSON.stringify({source:"web_client"}):JSON.stringify({source:"web_client"})});
+      s = d.session; setCur(s);
+      if(!s.title) j(`/api/sessions/${s.id}`,{method:"PATCH",body:JSON.stringify({title:text.slice(0,48)})}).catch(()=>{});
+      loadSessions().catch(()=>{});
+    }
+    setMsgs(m=>[...m,{role:"user",content:text}]);
+    setDraft(""); setStreaming(true); setStreamText(""); setReasoning(""); setTools([]);
+    setTimeout(scrollDown,30);
+    const sel = curLock || (modelList.def && !locks[s.id] ? null : null);
+    // lock model if one is explicitly chosen
+    try{
+      if(curLock && s.id===cur.id) { /* already locked on this session */ }
+      else if(curLock) await applyModel(s, curLock);
+    }catch(e){ showToast("model: "+e.message); }
+    const body = {message:text};
+    if(effort) body.model_options = {reasoning_effort:effort};
+    const ctrl = new AbortController(); abortRef.current = ctrl;
+    try{
+      const r = await fetch(API+`/api/sessions/${s.id}/chat/stream`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(body), signal:ctrl.signal});
+      if(!r.ok){ let m2="HTTP "+r.status; try{const e=await r.json();m2=e.error||m2;}catch(_){} throw new Error(m2); }
+      const reader = r.body.getReader(); const dec = new TextDecoder();
+      let buf="";
+      while(true){
+        const {value,done} = await reader.read(); if(done) break;
+        buf += dec.decode(value,{stream:true});
+        let idx;
+        while((idx=buf.indexOf("\n\n"))>=0){
+          const frame=buf.slice(0,idx); buf=buf.slice(idx+2);
+          let ev="",data="";
+          for(const line of frame.split("\n")){
+            if(line.startsWith("event:")) ev=line.slice(6).trim();
+            else if(line.startsWith("data:")) data+=line.slice(5).trim();
+          }
+          if(!data) continue; let p; try{p=JSON.parse(data);}catch(_){continue;}
+          if(ev==="assistant.delta"){ setStreamText(t=>t+(p.delta||"")); }
+          else if(ev==="tool.progress"){
+            if(p.tool_name==="_thinking"){ setReasoning(t=>t+(p.delta||"")); }
+            else setTools(ts=>{ const n=[...ts]; const i=n.findIndex(x=>x.name===p.tool_name);
+              if(i<0)n.push({name:p.tool_name,running:true}); else n[i]={...n[i],running:true,preview:p.preview};
+              return n;});
+          }
+          else if(ev==="assistant.completed"){
+            if(p.content){ setStreamText(p.content); }
+            setTools(ts=>ts.map(t=>({...t,running:false})));
+          }
+          else if(ev==="run.completed"){
+            if(p.messages){ setMsgs(m=>[...m.filter(x=>x.role!=='__stream'),
+              ...p.messages.map(mm=>({role:mm.role,content:mm.content||"",reasoning:mm.reasoning||mm.reasoning_content||""}))]);
+            } else { setMsgs(m=>[...m,{role:"assistant",content:p.content||streamText}]); }
+            setStreamText(""); setReasoning(""); setTools([]);
+            loadSessions().catch(()=>{});
+          }
+          else if(ev==="error"){ setMsgs(m=>m); setMsgs(m=>[...m,{role:"assistant",content:"",err:p.message}]); }
+        }
+        scrollDown();
+      }
+      if(streamText||reasoning){ setMsgs(m=>[...m,{role:"assistant",content:streamText,reasoning}]); }
+    }catch(e){
+      if(e.name!=="AbortError") setMsgs(m=>[...m,{role:"assistant",content:"",err:e.message}]);
+    }finally{ setStreaming(false); abortRef.current=null; scrollDown(); }
+  };
+
+  const setEffortV = (e)=>{
+    setEffort(e);
+    if(cur){ const ne={...efforts,[cur.id]:e}; setsEfforts(ne); lsSet("hermes.efforts",ne); }
+  };
+
+  const delSession = async (e,s)=>{
+    e.stopPropagation();
+    if(!confirm("Delete this session?")) return;
+    try{ await j(`/api/sessions/${s.id}`,{method:"DELETE"});
+      if(cur&&cur.id===s.id){ setCur(null); }
+      loadSessions().catch(()=>{});
+    }catch(err){ showToast("delete: "+err.message); }
+  };
+
+  const copyMsg = async (txt)=>{
+    try{ await navigator.clipboard.writeText(txt); showToast("Copied"); }
+    catch(_){ showToast("Copy failed"); }
+  };
+
+  // ---- text-to-speech (browser-native speechSynthesis) ----
+  const [speaking,setSpeaking] = useState(null);   // index of message being spoken
+  const speakTimer = useRef(null);
+  const voicesRef = useRef([]);
+  const ttsOK = typeof window!=="undefined" && "speechSynthesis" in window;
+  useEffect(()=>{
+    if(!ttsOK) return;
+    const load=()=>{ voicesRef.current = window.speechSynthesis.getVoices(); };
+    load();
+    window.speechSynthesis.onvoiceschanged = load;
+    return ()=>{ window.speechSynthesis.onvoiceschanged=null; window.speechSynthesis.cancel(); };
+  },[ttsOK]);
+  const cleanForSpeech = (t)=>{
+    if(!t) return "";
+    return t
+      .replace(/```[\s\S]*?```/g, " Code block. ")          // fenced code
+      .replace(/`([^`]*)`/g, "$1")                           // inline code
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")               // [text](url) -> text
+      .replace(/https?:\/\/\S+/g, " link ")                  // bare urls
+      .replace(/[*_#>|~\-]+/g, " ")                          // md markers
+      .replace(/\s+/g," ").trim();
+  };
+  const stopSpeak = useCallback(()=>{
+    if(ttsOK) window.speechSynthesis.cancel();
+    setSpeaking(null);
+    if(speakTimer.current){ clearInterval(speakTimer.current); speakTimer.current=null; }
+  },[ttsOK]);
+  const speakMsg = (i, txt)=>{
+    if(!ttsOK){ showToast("Speech not supported in this browser"); return; }
+    const plain = cleanForSpeech(txt);
+    if(!plain){ showToast("Nothing to read"); return; }
+    if(speaking===i){ stopSpeak(); return; }                 // toggle off
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(plain);
+    const voices = voicesRef.current;
+    if(voices.length){
+      const v = voices.find(v=>/Google US English/.test(v.name))
+        || voices.find(v=>v.lang==="en-US" && v.default)
+        || voices.find(v=>v.lang==="en-US") || voices.find(v=>v.lang.startsWith("en"));
+      if(v) u.voice = v;
+    }
+    u.rate = 1; u.pitch = 1;
+    u.onend = ()=>setSpeaking(cur=>cur===i?null:cur);
+    u.onerror = (e)=>{ setSpeaking(cur=>cur===i?null:cur);
+      if(e.error!=="canceled") showToast("Speech error: "+e.error); };
+    // Chrome kills long utterances after ~15s; nudge to keep them alive.
+    speakTimer.current = setInterval(()=>{
+      if(synth.speaking){ synth.pause(); synth.resume(); }
+    },12000);
+    setSpeaking(i);
+    synth.speak(u);
+  };
+
+  // ---- filtered + grouped sessions ----
+  const q = query.trim().toLowerCase();
+  const filtered = sessions.filter(s=>!q || (s.title||"").toLowerCase().includes(q)
+    || (s.model||"").toLowerCase().includes(q) || (s.source||"").toLowerCase().includes(q));
+  const groups = {};
+  for(const s of filtered){
+    const g = SRC_LABEL[s.source] || "Other";
+    (groups[g] = groups[g] || {order:SRC_ORDER[s.source]??9, items:[]}).items.push(s);
+  }
+  const groupNames = Object.keys(groups).sort((a,b)=>groups[a].order-groups[b].order);
+
+  // model modal filter
+  const [mQuery, setMQuery] = useState("");
+  const mq = mQuery.trim().toLowerCase();
+  const mGroups = mq
+    ? { 'Models': modelList.items.filter(i=>i.model.toLowerCase().includes(mq)||i.providerName.toLowerCase().includes(mq)) }
+    : (()=>{ const g={}; for(const i of modelList.items)(g[i.providerName]=g[i.providerName]||[]).push(i); return g; })();
+
+  // ---------- render ----------
+  const Sidebar = (
+    <aside className={"side"+(sideOpen?" open":"")}>
+      <div className="side-head">
+        <div className="logo"><div className="mark">{Ic.bolt}</div>Hermes</div>
+        <button className="newchat" onClick={newSession}>{Ic.plus}New</button>
+      </div>
+      <div className="searchwrap">
+        {Ic.search}
+        <input className="search" placeholder="Search sessions…" value={query} onChange={e=>setQuery(e.target.value)}/>
+      </div>
+      <div className="side-list">
+        {loading ? [1,2,3,4,5].map(i=><div className="skeleton" key={i}></div>) :
+        groupNames.length===0 ? <div style={{padding:"30px 12px",color:"var(--faint)",fontSize:13,textAlign:"center"}}>
+            {q?'No matches':'No sessions yet'}</div> :
+        groupNames.map(g=>(
+          <div key={g}>
+            <div className="grp">{g}</div>
+            {groups[g].items.map(s=>(
+              <div key={s.id} className={"item"+(cur&&cur.id===s.id?" on":"")} onClick={e=>openSession(s,e)}>
+                <div className="body">
+                  <div className="trow">
+                    <div className="name">{s.title||s.id}</div>
+                    <div className="ago">{timeAgo(s.last_active||s.started_at)}</div>
+                  </div>
+                  {s.preview && <div className="prev">{s.preview}</div>}
+                  <div className="meta">
+                    <span className="pill" style={{color:"var(--faint)",fontSize:10.5}}>{s.model||"default"}</span>
+                    <span className="pill" style={{color:"var(--faint)",fontSize:10.5}}>{s.message_count??0}</span>
+                  </div>
+                </div>
+                <button className="del" title="Delete" onClick={e=>delSession(e,s)}>{Ic.trash}</button>
+              </div>))}
+          </div>))}
+      </div>
+      <div className="side-foot">
+        <div className="pulse"></div>
+        <div style={{minWidth:0}}>
+          <div className="m">{shownModel?shownModel.model:"…"}</div>
+          <div className="p">{shownModel?shownModel.name+(shownModel.isDefault?" · default":""):"connecting"}</div>
+        </div>
+      </div>
+    </aside>
+  );
+
+  const ModelModal = modelModal ? (
+    <div className="overlay" onClick={()=>setModelModal(false)}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <h3>Model</h3>
+        <div className="msub">Pick a model for this session. Applies on your next message.</div>
+        <div className="msearch">{Ic.search}<input placeholder="Filter models…" value={mQuery} onChange={e=>setMQuery(e.target.value)}/></div>
+        <div className="mlist">
+          {modelList.items.length===0 ? <div style={{padding:20,color:"var(--faint)",fontSize:13,textAlign:"center"}}>No models available</div> :
+          Object.keys(mGroups).map(g=>(
+            <div key={g}>
+              <div className="mgrp">{g}</div>
+              {mGroups[g].map(i=>(
+                <div key={i.key} className={"mitem"+(curLock&&curLock.model===i.model&&curLock.provider===i.provider?" sel":"")}
+                     onClick={()=>{ if(cur){ applyModel(cur,{model:i.model,provider:i.provider}).then(()=>setModelModal(false)).catch(e=>showToast(e.message)); } else { setModelModal(false); showToast("Start a session first"); } }}>
+                  {i.isCurrent && <div className="cur" title="current default"></div>}
+                  <div className="mn">{i.model}</div>
+                  {curLock&&curLock.model===i.model&&curLock.provider===i.provider ? <div className="chk">✓</div> : null}
+                </div>))}
+            </div>))}
+        </div>
+        <div className="mfoot"><button onClick={()=>setModelModal(false)}>Close</button></div>
+      </div>
+    </div>
+  ) : null;
+
+  const ChatHead = cur ? (
+    <div className="bar">
+      <button className="iconbtn" onClick={()=>setSideOpen(true)}>{Ic.menu}</button>
+      <div className="title">{cur.title||"New chat"}</div>
+      {shownModel && (
+        <div className="modelpill" onClick={()=>setModelModal(true)} title="Change model">
+          <div className="mdot"></div>
+          {curLock?curLock.model:shownModel.model}
+          <span className="mp">{shownModel.name}</span>
+          {Ic.chev}
+        </div>
+      )}
+      <button className="btn icon ghost" title="Reload" onClick={()=>openSession(cur)}>{Ic.refresh}</button>
+    </div>
+  ) : (
+    <div className="bar">
+      <button className="iconbtn" onClick={()=>setSideOpen(true)}>{Ic.menu}</button>
+      <div className="title" style={{color:"var(--muted)"}}>New chat</div>
+    </div>
+  );
+
+  return (
+    <div className="app">
+      {Sidebar}
+      {sideOpen && <div className="backdrop show" onClick={()=>setSideOpen(false)}></div>}
+      <div className="main">
+        {ChatHead}
+        {cur ? (
+          <React.Fragment>
+            <div className="chat" ref={scrollRef}>
+              <div className="chat-inner">
+                {msgs.length===0 && !streaming && (
+                  <div className="empty-main" style={{height:"100%",minHeight:300}}>
+                    <div className="big">{Ic.bolt}</div>
+                    <h2>Hermes</h2>
+                    <p>Ask anything. Full tools, memory, and your B70 model.</p>
+                  </div>
+                )}
+                {msgs.map((m,i)=>(
+                  <div key={i}>
+                    {m.err && <div className="msg assistant"><div className="errbox">{m.err}</div></div>}
+                    {m.role==='user' && (
+                      <div className="msg user"><div className="mcol">
+                        <div className="bubble">{renderText(m.content)}</div>
+                        <div className="acts">
+                          <button className={"speakb"+(speaking===i?" on":"")} title="Read aloud" onClick={()=>speakMsg(i,m.content)}>{Ic.speaker}</button>
+                          <button className="speakb" title="Copy" onClick={()=>copyMsg(m.content)}>{Ic.copy}</button>
+                        </div>
+                      </div></div>
+                    )}
+                    {(m.role!=='user' && (m.content||m.reasoning||m.tool)) && (
+                      <div className="msg assistant">
+                        {m.tool ? <div className="tool"><span>✓</span><span className="tn">{m.tool}</span></div> : (
+                          <div className="ahead">
+                            <div className="who"><div className="mark">H</div>Hermes</div>
+                            {m.content && <button className="copyb" onClick={()=>copyMsg(m.content)}>{Ic.copy}copy</button>}
+                          </div>
+                        )}
+                        {m.reasoning && (
+                          <details className="reasoning">
+                            <summary className="rh">
+                              <span>✦ reasoning</span><span className="car">{Ic.chev}</span>
+                            </summary>
+                            <div className="rb">{m.reasoning}</div>
+                          </details>
+                        )}
+                        {m.content && <div className="bubble">{renderText(m.content)}</div>}
+                        {m.content && <div className="acts">
+                          <button className={"speakb"+(speaking===i?" on":"")} title="Read aloud" onClick={()=>speakMsg(i,m.content)}>{Ic.speaker}</button>
+                        </div>}
+                      </div>
+                    )}
+                  </div>))}
+                {streaming && (
+                  <div className="msg assistant">
+                    <div className="ahead"><div className="who"><div className="mark">H</div>Hermes</div>
+                      <span className="sub" style={{color:"var(--faint)"}}>generating…</span></div>
+                    {tools.length>0 && tools.map((t,i)=>(
+                      <div className="tool" key={i}>
+                        {t.running?<div className="spin"></div>:<span>✓</span>}
+                        <span className="tn">{t.name}</span>{t.preview&&<span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{t.preview}</span>}
+                      </div>))}
+                    {reasoning && <details className="reasoning"><summary className="rh"><span>✦ reasoning</span><span className="car">{Ic.chev}</span></summary><div className="rb">{reasoning}</div></details>}
+                    <div className="bubble">{streamText ? renderText(streamText) :
+                      (reasoning?null:<span className="typing"><i></i><i></i><i></i></span>)}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="composer">
+              <div className="composer-inner">
+                <div className="thinkrow">
+                  <span className="label">Thinking</span>
+                  <div className="seg">
+                    {["",'low','medium','high'].map(e=>(
+                      <button key={e||'off'} className={effort===e?"on":""} onClick={()=>setEffortV(e)}>{e||'off'}</button>))}
+                  </div>
+                </div>
+                <div className="cbox">
+                  <textarea ref={taRef} placeholder="Message Hermes…" value={draft} rows={1}
+                    onChange={e=>{ setDraft(e.target.value);
+                      e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight,170)+"px"; }}
+                    onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); doSend(); } }} />
+                  {streaming
+                    ? <button className="send stop" onClick={()=>abortRef.current&&abortRef.current.abort()}>{Ic.stop}</button>
+                    : <button className="send" onClick={doSend} disabled={!draft.trim()}>{Ic.send}</button>}
+                </div>
+              </div>
+            </div>
+          </React.Fragment>
+        ) : (
+          <div className="empty-main">
+            <div className="big">{Ic.bolt}</div>
+            <h2>Hermes</h2>
+            <p>Select a session or start a new one.</p>
+            <button className="newchat" style={{marginTop:14}} onClick={newSession}>{Ic.plus}New chat</button>
+          </div>
+        )}
+      </div>
+      {ModelModal}
+      {toast && <div className="toast">{toast}</div>}
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

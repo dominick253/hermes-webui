@@ -1,0 +1,17 @@
+# JS deps
+node_modules/
+
+# Build artifacts (regenerate with `npm run build`)
+deploy.index.html
+app.js
+
+# Never commit secrets
+.env
+*.env
+*.pem
+*.key
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
