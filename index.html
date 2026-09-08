@@ -1019,7 +1019,7 @@ function App(){
                 <React.Fragment key={i}>
                   {m.err&&<div className="msg assistant"><div className="errbox">{m.err}</div></div>}
                   {m.role==="user"&&<MsgBubble msg={{...m,kind:"user"}} onSpeak={speak} speaking={speaking} doCopy={doCopy}/>}
-                  {m.role!=="user"&&(m.text||m.reasoning||m.tool)&&
+                  {m.role!=="user"&&(m.text||m.reasoning||m.tool||(m.tools&&m.tools.length))&&
                     <MsgBubble msg={m} onSpeak={speak} speaking={speaking} doCopy={doCopy}/>}
                 </React.Fragment>
               ))}
