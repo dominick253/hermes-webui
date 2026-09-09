@@ -18,6 +18,7 @@ node build.js      # transpiles inline JSX -> deploy.index.html + app.js
 node --check app.js
 # deploy (live host): sudo cp deploy.index.html -> /var/www/hermes-webui/index.html,
 #                     sudo cp app.js react*.js favicon* site.webmanifest -> /var/www/hermes-webui/
+#                     sudo cp -r fonts -> /var/www/hermes-webui/fonts   (self-hosted Inter + JetBrains Mono)
 #                     sudo chown root:www-data on all
 ```
 `/var/www/hermes-webui` is root-owned (served by caddy user `caddy`); build
