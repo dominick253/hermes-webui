@@ -414,7 +414,7 @@
 <div id="root"></div>
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback,useMemo}=React;
-const API="https://10.71.71.112:8443";
+const API=location.protocol+'//'+location.host;
 const SRC_LABEL={desktop:"Desktop",telegram:"Telegram",cron:"Cron",api_server:"This app",web_client:"This app",cli:"CLI"};
 const SRC_ORDER={api_server:0,web_client:0,desktop:1,telegram:2,cron:3,cli:4};
 const timeAgo=ts=>{ if(!ts)return""; const d=Date.now()-new Date(ts).getTime(); if(d<0)return""; const m=Math.floor(d/6e4); if(m<1)return"now"; if(m<60)return m+"m"; const h=Math.floor(m/60); if(h<24)return h+"h"; return Math.floor(h/24)+"d"; };
