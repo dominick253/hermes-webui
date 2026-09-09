@@ -422,6 +422,10 @@ const fmtTok=n=>{n=Math.max(0,Math.round(n||0));return n>=1e6?(n/1e6).toFixed(2)
 const fmtDur=s=>{s=Math.max(0,s||0);if(s<1)return Math.round(s*1000)+"ms";if(s<60)return s.toFixed(1)+"s";const m=Math.floor(s/60);return m+"m "+Math.round(s%60)+"s";};
 const fmtT=t=>{t=Math.max(0,t||0);if(t<60)return Math.floor(t)+"s";const h=Math.floor(t/3600),m=Math.floor(t%3600/60),s2=Math.floor(t%60);return (h?h+"h ":"")+(m?m+"m ":"")+s2+"s";};
 const estTok=s=>Math.round((s||0)/3.4);
+// Rough token estimate for tool-call tokens (name + args + preview) so the LIVE
+// "tokens out" estimate matches run.completed's output_tokens total, which counts
+// thinking + tool calls + text.
+const estToolsTok=list=>{if(!list||!list.length)return 0;let c=0;for(const t of list){c+=4;if(t.args){try{c+=Math.round((JSON.stringify(t.args)||"").length/3.4);}catch(_){c+=8;}}if(t.preview)c+=Math.round((t.preview||"").length/3.4);}return c;};
 const lsGet=(k,d)=>{ try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;} };
 const lsSet=(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} };
 const I={
@@ -581,19 +585,24 @@ function ToolRow({tool,streaming}){
     {res?<details className="tres"><summary>result</summary><pre className="tresbody">{String(res)}</pre></details>:null}
   </div>;
 }
-function StatsBar({streaming,st,reasonLen,textLen,toolMs,turnStart,nowTick,shownModel}){
+function StatsBar({streaming,st,reasonLen,textLen,toolMs,turnStart,firstGen,tools,nowTick,shownModel}){
   void nowTick; // re-render tick while live
   const show=streaming||st;
   if(!show)return null;
-  const wallMs=streaming?Math.max(0,Date.now()-turnStart):st.wallMs;
-  const toolMsNow=streaming?toolMs:st.toolMs;
-  const modelMsNow=Math.max(0,wallMs-toolMsNow*1000);
-  const outTok=streaming?estTok(reasonLen+textLen):(st?st.genTok:0);
-  const spd=streaming?(modelMsNow>200&&outTok>0?outTok/(modelMsNow/1000):0):(st&&st.spd||0);
+  const now=Date.now();
+  const wallMs=streaming?Math.max(0,now-turnStart):st.wallMs;
+  const toolMsNowMs=streaming?toolMs*1000:st.toolMs*1000;
+  const modelMsNow=Math.max(0,wallMs-toolMsNowMs);
+  // tok/s is over the ACTIVE generation window only (first token emitted -> now,
+  // minus tool time inside it) — NOT wall clock. Prefill (prompt processing before
+  // the first token) does not count. Final turns use the stored genMs.
+  const genMsNow=streaming?(firstGen?Math.max(0,(now-firstGen)-toolMsNowMs):0):(st?st.genMs:0);
+  const outTok=streaming?(estTok(reasonLen+textLen)+estToolsTok(tools)):(st?st.genTok:0);
+  const spd=streaming?(genMsNow>200&&outTok>0?outTok/(genMsNow/1000):0):(st&&st.spd||0);
   return <div className="tstats">
     <span className="ts-live"><i/> {streaming?"streaming":"turn"}</span>
     <div className="ts-cell"><span className="k">clock</span><span className="v">{fmtDur(wallMs/1000)}</span></div>
-    <div className="ts-cell"><span className="k">model time</span><span className="v hi">{fmtDur(modelMsNow/1000)} <span className="sub">{streaming?Math.round(toolMsNow)+" tool":""}</span></span></div>
+    <div className="ts-cell"><span className="k">model time</span><span className="v hi">{fmtDur(modelMsNow/1000)} <span className="sub">{streaming?Math.round(toolMsNowMs/1000)+" tool":""}</span></span></div>
     <div className="ts-cell"><span className="k">tokens out</span><span className="v">{fmtTok(outTok)} <span className="sub">{streaming?"~":""}{spd>0?Math.round(spd)+" tok/s":""}</span></span></div>
     <div className="ts-cell"><span className="k">tokens in</span><span className="v">{st?fmtTok(st.promptTok):"…"}</span></div>
     <div className="ts-cell"><span className="k">model</span><span className="v" style={{color:'var(--muted)',fontWeight:600}}>{shownModel?shownModel.model:(st&&st.model)||""}</span></div>
@@ -713,6 +722,7 @@ function App(){
   const [nowTick,setNowTick]=useState(0);
   const abortRef=useRef(null); const scrollRef=useRef(null); const taRef=useRef(null);
   const turnStart=useRef(0); const toolMs=useRef(0); const toolState=useRef({});
+  const firstGen=useRef(0); const lastGen=useRef(0); // active-generation window: first token emitted -> last token
 
   // Follow-mode: while a turn is streaming, a requestAnimationFrame loop keeps the view pinned
   // to the bottom so the user always sees the newest token. "Following" is derived from the
@@ -913,6 +923,7 @@ function App(){
     setMsgs(m=>[...m,{id:'u'+Date.now(),role:"user",text}]);
     setDraft("");setStreaming(true);setStreamText("");setReasoning("");setTools([]);setStatsFinal(null);
     turnStart.current=Date.now();toolMs.current=0;toolState.current={};
+    firstGen.current=0;lastGen.current=0;
     setTimeout(scrollDown,30);
     const body={message:text};
     body.model_options={reasoning_effort: curEffort==="off"?"none":(curEffort||"none")};
@@ -940,16 +951,19 @@ function App(){
           }
           if(!data)continue;let p;try{p=JSON.parse(data);}catch(_){continue;}
           if(ev==="assistant.delta"){
+            const n=Date.now(); if(!firstGen.current)firstGen.current=n; lastGen.current=n;
             setStreamText(t=>t+(p.delta||""));
           }
           else if(ev==="tool.progress"){
-            if(p.tool_name==="_thinking"){setReasoning(t=>t+(p.delta||""));}
+            if(p.tool_name==="_thinking"){const n=Date.now(); if(!firstGen.current)firstGen.current=n; lastGen.current=n; setReasoning(t=>t+(p.delta||""));}
             else{setTools(ts=>{const n=[...ts];const i=n.findIndex(x=>x.name===p.tool_name&&!x.running);
               if(i<0)n.push({name:p.tool_name,running:true});else n[i]={...n[i],running:true,preview:p.preview};
               return n;});}
           }
           else if(ev==="tool.started"){
             const t0=Date.now();
+            // The model just finished emitting the tool-call tokens -> part of generation.
+            if(!firstGen.current)firstGen.current=t0; lastGen.current=t0;
             toolState.current[p.tool_name]={t0,running:true,args:p.args||null};
             setTools(ts=>{const n=[...ts];const i=n.findIndex(x=>x.name===p.tool_name&&!x.running);
               if(i<0)n.push({name:p.tool_name,running:true,preview:p.preview,args:p.args||null});
@@ -966,6 +980,7 @@ function App(){
             setTools(ts=>ts.map(t=>t.name===p.tool_name?{...t,running:false,dur:(st&&st.dur!=null)?st.dur:t.dur,err:ev==="tool.failed"}:t));
           }
           else if(ev==="assistant.completed"){
+            const n=Date.now(); if(!firstGen.current)firstGen.current=n; lastGen.current=n;
             if(p.content)setStreamText(p.content);
             setTools(ts=>ts.map(t=>({...t,running:false})));
           }
@@ -981,10 +996,14 @@ function App(){
             const wallMs=Math.max(0,Date.now()-turnStart.current);
             const toolMsTotal=Math.round(toolMs.current);
             const modelMs=Math.max(0,wallMs-toolMsTotal);
+            // tok/s over the ACTIVE generation window only: first token emitted ->
+            // last token, minus tool execution time inside it. Prefill (prompt
+            // processing before the first token) is excluded.
+            const genMs=Math.max(0,(lastGen.current-firstGen.current)-toolMsTotal);
             const toolCount=Object.keys(toolState.current).length;
             const modelMeta=(p.runtime&&p.runtime.model)||"";
-            setStatsFinal({wallMs,toolMs:toolMsTotal/1000,modelMs,promptTok,genTok,
-              spd:modelMs>200?genTok/(modelMs/1000):0,toolCount,model:modelMeta});
+            setStatsFinal({wallMs,toolMs:toolMsTotal/1000,modelMs,genMs,promptTok,genTok,
+              spd:genMs>200?genTok/(genMs/1000):0,toolCount,model:modelMeta});
             if(p.messages){
               setMsgs(m=>{
                 const clean=m.filter(x=>x.id!=='__stream');
@@ -1111,7 +1130,7 @@ function App(){
       <div className="chat" ref={scrollRef}>
         <div className="chat-inner">
           <StatsBar streaming={streaming} st={statsFinal} reasonLen={reasoning.length} textLen={streamText.length}
-            toolMs={toolMs.current/1000} turnStart={turnStart.current} nowTick={nowTick} shownModel={shownModel}/>
+            toolMs={toolMs.current/1000} turnStart={turnStart.current} firstGen={firstGen.current} tools={tools} nowTick={nowTick} shownModel={shownModel}/>
           {!cur?(
             <div className="empty-main">
               <div className="big">H</div>
