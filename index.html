@@ -131,7 +131,15 @@
   .backdrop{display:none}
 
   /* ============ MAIN ============ */
-  .main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--chat)}
+  .main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--chat);position:relative}
+  .jump{position:absolute;left:50%;transform:translateX(-50%);bottom:14px;z-index:5;
+    display:flex;align-items:center;gap:6px;padding:7px 13px 7px 11px;cursor:pointer;
+    background:var(--panel2);border:1px solid var(--accent-dim);border-radius:999px;
+    color:var(--accent-hi);font:600 12px/1 var(--mono);letter-spacing:.2px;
+    box-shadow:0 6px 20px rgba(0,0,0,.5),var(--accent-glow);backdrop-filter:blur(8px);
+    animation:jumpin .18s ease-out}
+  .jump:active{transform:translateX(-50%) scale(.97)}
+  @keyframes jumpin{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
   .bar{display:flex;align-items:center;gap:10px;padding:12px 16px;
     background:var(--panel);border-bottom:1px solid var(--line)}
   .bar .title{font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;
@@ -706,12 +714,51 @@ function App(){
   const abortRef=useRef(null); const scrollRef=useRef(null); const taRef=useRef(null);
   const turnStart=useRef(0); const toolMs=useRef(0); const toolState=useRef({});
 
+  // Follow-mode: while a turn is streaming, a requestAnimationFrame loop keeps the view pinned
+  // to the bottom so the user always sees the newest token. "Following" is derived from the
+  // scroll POSITION (within 100px of the bottom). The rAF loop runs after event processing,
+  // so a user's scroll-up is ALWAYS registered before the next follow decision — no race.
+  // Scrolling up (past the threshold) stops auto-follow and shows the floating "Latest" button
+  // (`!atBottom`); clicking it — or scrolling back to the bottom — resumes follow automatically.
+  const [atBottom,setAtBottom]=useState(true);
+  const followingRef=useRef(true);
+  const setFollowing=useCallback((v)=>{if(followingRef.current!==v){followingRef.current=v;setAtBottom(v);}},[]);
+  const scrollDown=useCallback(()=>{const el=scrollRef.current;if(el)el.scrollTop=el.scrollHeight;setFollowing(true);},[setFollowing]);
+
   const effDefault=effort["__default__"]||"";
   const curEffort=(cur&&(effort[cur.id]||null))||effDefault;
   const curLock=cur?(locks[cur.id]||null):null;
 
   const showToast=useCallback((m)=>{setToast(m);setTimeout(()=>setToast(""),2800);},[]);
-  const scrollDown=useCallback(()=>{const el=scrollRef.current;if(el)el.scrollTop=el.scrollHeight;},[]);
+  // Follow-mode — two complementary pieces:
+  // (1) Scroll listener = the INTENT detector. It fires ONLY on a real scroll event (a user
+  //     swipe/scroll or our own programmatic scroll) — it does NOT fire from streaming content
+  //     growth, because while following the view is already pinned at the bottom (no new scroll
+  //     event). It reads the position: within 100px of the bottom => following, else => stopped.
+  //     This is what lets a genuine scroll-up switch follow off (and drive the "Latest" button).
+  // (2) rAF loop = the PINNER, running every frame while a turn streams. It re-pins the view to
+  //     the bottom at 60fps while followingRef is true, so the newest token is always visible.
+  //     rAF runs after the browser's paint, so it both reacts to the user's scroll and is the
+  //     correct place to re-pin each frame.
+  useEffect(()=>{
+    const el=scrollRef.current;if(!el)return;
+    const onScroll=()=>setFollowing(el.scrollHeight-el.scrollTop-el.clientHeight<100);
+    el.addEventListener("scroll",onScroll,{passive:true});
+    return ()=>el.removeEventListener("scroll",onScroll);
+  },[cur,setFollowing]);
+  useEffect(()=>{
+    if(!cur||loadingMsgs||!streaming)return;
+    let raf;
+    const loop=()=>{
+      const el=scrollRef.current;
+      if(el&&followingRef.current)el.scrollTop=el.scrollHeight;
+      raf=requestAnimationFrame(loop);
+    };
+    raf=requestAnimationFrame(loop);
+    return ()=>cancelAnimationFrame(raf);
+  },[cur,loadingMsgs,streaming]);
+  // After history loads (or on first open), jump to the bottom of the conversation.
+  useEffect(()=>{if(cur&&!loadingMsgs)scrollDown();},[cur,loadingMsgs,scrollDown]);
 
   const loadModels=useCallback(async()=>{
     try{const r=await fetch(API+"/api/model/options");const d=await r.json();setModelOpts(d);}catch(e){}
@@ -770,8 +817,9 @@ function App(){
   const openSession=useCallback(async(s)=>{
     stopSpeak();setCur(s);setMsgs([]);setSideOpen(false);
     setStreamText("");setReasoning("");setTools([]);setLoadingMsgs(true);
+    setFollowing(true);
     await refreshMessages(s.id);setLoadingMsgs(false);
-  },[refreshMessages,stopSpeak]);
+  },[refreshMessages,stopSpeak,setFollowing]);
 
   const applyModel=useCallback(async(sel)=>{
     const r=await fetch(API+"/api/sessions/"+cur.id+"/model",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:sel.model})});
@@ -796,11 +844,12 @@ function App(){
       const d=await r.json();const s=d.session;
       stopSpeak();setCur(s);setMsgs([]);setSideOpen(false);
       setStreamText("");setReasoning("");setTools([]);
+      setFollowing(true);
       applyPendingModel(s);
       loadSessions().catch(()=>{});
       if(taRef.current)setTimeout(()=>taRef.current.focus(),50);
     }catch(e){showToast("new session: "+e.message);}
-  },[stopSpeak,loadSessions,showToast,applyPendingModel]);
+  },[stopSpeak,loadSessions,showToast,applyPendingModel,setFollowing]);
 
   const delSession=useCallback(async(e,s)=>{
     e.stopPropagation();
@@ -839,6 +888,7 @@ function App(){
   const doSend=useCallback(async()=>{
     const text=draft.trim();if(!text||streaming)return;
     stopSpeak();
+    scrollDown(); // new turn always starts pinned to the bottom
     let s=cur;
     if(!s){
       let d;
@@ -957,14 +1007,13 @@ function App(){
           }
           else if(ev==="error")setMsgs(m=>[...m,{id:'e'+Date.now(),role:"assistant",text:"",err:p.message}]);
         }
-        scrollDown();
       }
       if(idleTimer)clearTimeout(idleTimer);
       if(streamText||reasoning)setMsgs(m=>[...m,{id:'a'+Date.now(),role:"assistant",text:streamText,reasoning}]);
     }catch(e){
       if(e.name!=="AbortError")setMsgs(m=>[...m,{id:'e'+Date.now(),role:"assistant",text:"",err:e.message}]);
-    }finally{setStreaming(false);abortRef.current=null;scrollDown();}
-  },[draft,streaming,cur,curEffort,stopSpeak,loadSessions,scrollDown,applyPendingModel]);
+    }finally{setStreaming(false);abortRef.current=null;}
+  },[draft,streaming,cur,curEffort,stopSpeak,loadSessions,applyPendingModel]);
 
   const setEffortV=useCallback((e)=>{
     // Never deref cur.id inside the state updater (runs at render time →
@@ -1114,6 +1163,11 @@ function App(){
           </div>
         </div>
       </div>
+      {cur&&!atBottom?(
+        <button className="jump" onClick={scrollDown} title="Jump to latest" aria-label="Jump to latest">
+          <span dangerouslySetInnerHTML={{__html:I.chev(15)}}/><span>Latest</span>
+        </button>
+      ):null}
     </div>
     {modelModal?(
       <ModelModal items={modelList.items}
