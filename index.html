@@ -625,14 +625,19 @@ const MsgBubble=React.memo(function MsgBubble({msg,onSpeak,speaking,doCopy}){
     </div></div>;
   }
   const ap=streaming?(msg.text?'text':'reasoning'):null;
-  const reasonOpen=streaming&&msg.reasoning&&!msg.text;
+  // Reasoning is stored/segmented per assistant message. LIVE, a turn can hold
+  // several thinking bursts (one per tool round) -> msg.reasoningSegs array.
+  // HISTORY rows carry a single msg.reasoning -> one segment.
+  const segs=Array.isArray(msg.reasoningSegs)&&msg.reasoningSegs.length
+    ? msg.reasoningSegs
+    : (msg.reasoning?[(msg.reasoning||"")]:[]);
+  const reasonOpen=streaming&&!msg.text;
   const showTyping=streaming&&!msg.reasoning&&!msg.text&&!(msg.tools&&msg.tools.length);
   let phase=null;
   if(streaming){
-    if(msg.reasoning&&msg.text) phase={t:'Writing…',c:'write'};
-    else if(msg.tools&&msg.tools.length&&!msg.text) phase={t:'Running tools…',c:'think'};
-    else if(msg.reasoning&&!msg.text) phase={t:'Thinking…',c:'think'};
-    else if(msg.text) phase={t:'Responding…',c:'write'};
+    if(msg.text) phase={t:'Writing…',c:'write'};
+    else if(msg.tools&&msg.tools.length) phase={t:'Running tools…',c:'think'};
+    else if(segs.length) phase={t:'Thinking…',c:'think'};
     else phase={t:'Working…',c:'think'};
   }
   return <div className="msg assistant">
@@ -641,7 +646,8 @@ const MsgBubble=React.memo(function MsgBubble({msg,onSpeak,speaking,doCopy}){
       {phase?<span className={'phase '+phase.c}><i className="pdot"></i>{phase.t}</span>:null}
       {!streaming&&msg.text?<button className="copyb" onClick={()=>doCopy(msg.text)} title="Copy"><span dangerouslySetInnerHTML={{__html:I.copy(12)}}/>copy</button>:null}
     </div>
-    {msg.reasoning?<Reasoning text={msg.reasoning} open={reasonOpen} caret={streaming&&reasonOpen}/>:null}
+    {segs.map((sg,si)=>sg.trim()?
+      <Reasoning key={si} text={sg} open={reasonOpen} caret={streaming&&reasonOpen&&si===segs.length-1}/>:null)}
     <div className="bubble" style={{minHeight:"0"}}>
       {msg.tools&&msg.tools.length?msg.tools.map((t,ti)=><ToolRow key={ti} tool={t} streaming={streaming}/>):null}
       {msg.text?<span><MD text={msg.text}/>{ap==='text'?<span className="caret"/>:null}</span>:null}
@@ -713,6 +719,16 @@ function App(){
   const [streaming,setStreaming]=useState(false);
   const [streamText,setStreamText]=useState("");
   const [reasoning,setReasoning]=useState("");
+  // Reasoning arrives on the wire as a continuous _thinking stream, but the
+  // backend stores it as a separate `reasoning` field PER assistant message
+  // (verified in the session DB: each assistant row carries its own
+  // reasoning). The model emits a burst of thinking before each tool call,
+  // so a burst that follows a tool boundary is a NEW thinking segment.
+  // We segment on tool.started / tool.completed and render one block per
+  // segment — matching how history and the desktop app show it.
+  // reasoningSegs holds the SEGMENTS (array of strings); the live bubble
+  // joins them with \x1e so MsgBubble can split on an unambiguous marker.
+  const [reasoningSegs,setReasoningSegs]=useState(null);
   const [tools,setTools]=useState([]);
   const [query,setQuery]=useState("");
   const [draft,setDraft]=useState("");
@@ -797,7 +813,10 @@ function App(){
 
   const refreshMessages=useCallback(async(id)=>{
     try{
-      const r=await fetch(API+"/api/sessions/"+id+"/messages?limit=500&order=oldest");const d=await r.json();
+      // order=latest returns the NEWEST `limit` messages in ascending order.
+      // (order=oldest truncates long sessions to the oldest N and silently
+      // drops the recent conversation — the "resuming a desktop session" bug.)
+      const r=await fetch(API+"/api/sessions/"+id+"/messages?limit=500&order=latest");const d=await r.json();
       // History: assistant msgs carry tool_calls[].function.{name,arguments(JSON string)};
       // separate role:"tool" msgs carry results, matched via tool_call_id.
       const byId={};
@@ -818,17 +837,30 @@ function App(){
         }
         return rec;
       }).filter(m=>m&&(m.text||m.reasoning||(m.tools&&m.tools.length)));
-      setMsgs(out);setTimeout(scrollDown,60);
-    }catch(e){showToast("load messages: "+e.message);}
+      setMsgs(out);setTimeout(scrollDown,60);return out;
+    }catch(e){showToast("load messages: "+e.message);return [];}
   },[showToast,scrollDown]);
 
   const stopSpeak=useCallback(()=>{try{window.speechSynthesis&&window.speechSynthesis.cancel();}catch(e){}setSpeaking(null);},[]);
 
   const openSession=useCallback(async(s)=>{
     stopSpeak();setCur(s);setMsgs([]);setSideOpen(false);
-    setStreamText("");setReasoning("");setTools([]);setLoadingMsgs(true);
+    setStreamText("");setReasoning("");setReasoningSegs([]);setTools([]);setLoadingMsgs(true);
     setFollowing(true);
-    await refreshMessages(s.id);setLoadingMsgs(false);
+    const loaded=await refreshMessages(s.id);setLoadingMsgs(false);
+    // Self-heal: a session with no real title would otherwise render its raw
+    // api_… id in the sidebar. Derive one from the first user message.
+    const fu=(loaded||[]).find(m=>m.role==="user");
+    if(!s.title&&fu){
+      const src=(fu.text||"").replace(/\s+/g," ").trim();
+      if(src){
+        const t=src.length>64?src.slice(0,64).trim()+"…":src;
+        try{
+          await fetch(API+"/api/sessions/"+s.id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:t})});
+          setSessions(ss=>ss.map(x=>x.id===s.id?{...x,title:t}:x));
+        }catch(_){}
+      }
+    }
   },[refreshMessages,stopSpeak,setFollowing]);
 
   const applyModel=useCallback(async(sel)=>{
@@ -903,7 +935,15 @@ function App(){
     if(!s){
       let d;
       try{
-        const r=await fetch(API+"/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source:"web_client"})});
+        // Send the title IN THE CREATE POST (atomic): a follow-up PATCH races
+        // loadSessions() and the sidebar briefly shows the raw api_… id.
+        // The gateway writes create-time titles directly and NULL provenance
+        // ranks as `user`, so the LLM auto-titler never clobbers it.
+        const mkT=()=>text.replace(/\s+/g," ").slice(0,48)||"New chat";
+        let r=await fetch(API+"/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source:"web_client",title:mkT()})});
+        if(!r.ok&&r.status===400){ // title already in use -> retry without one
+          r=await fetch(API+"/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source:"web_client"})});
+        }
         if(!r.ok){let m2="HTTP "+r.status;try{const e=await r.json();m2=e.error||m2;}catch(_){}throw new Error(m2);}
         d=await r.json();
       }catch(e){
@@ -916,14 +956,21 @@ function App(){
         return;
       }
       setCur(s);
-      if(!s.title)fetch(API+"/api/sessions/"+s.id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:text.slice(0,48)})}).catch(()=>{});
       applyPendingModel(s);
       loadSessions().catch(()=>{});
     }
     setMsgs(m=>[...m,{id:'u'+Date.now(),role:"user",text}]);
-    setDraft("");setStreaming(true);setStreamText("");setReasoning("");setTools([]);setStatsFinal(null);
+    // Closure locals for THIS turn's generated output. The stream loop's async
+    // callbacks would otherwise read `streamText`/`reasoning` from a stale
+    // render closure (stuck at ""), so the final record is built from these.
+    let turnText="",turnReason="",turnReasonSegs=[],turnTools=[],turnId=null;
+    setDraft("");setStreaming(true);setStreamText("");setReasoning("");setReasoningSegs([]);setTools([]);setStatsFinal(null);
     turnStart.current=Date.now();toolMs.current=0;toolState.current={};
     firstGen.current=0;lastGen.current=0;
+    // A NEW thinking segment = a burst of _thinking that follows a tool
+    // boundary (the model thinks again before each tool call). Each burst is
+    // one element of turnReasonSegs -> one block in the live bubble.
+    const newSeg=()=>{turnReasonSegs=[...turnReasonSegs,""];setReasoningSegs(turnReasonSegs);};
     setTimeout(scrollDown,30);
     const body={message:text};
     body.model_options={reasoning_effort: curEffort==="off"?"none":(curEffort||"none")};
@@ -952,23 +999,27 @@ function App(){
           if(!data)continue;let p;try{p=JSON.parse(data);}catch(_){continue;}
           if(ev==="assistant.delta"){
             const n=Date.now(); if(!firstGen.current)firstGen.current=n; lastGen.current=n;
-            setStreamText(t=>t+(p.delta||""));
+            turnText+=p.delta||""; setStreamText(t=>t+(p.delta||""));
           }
           else if(ev==="tool.progress"){
-            if(p.tool_name==="_thinking"){const n=Date.now(); if(!firstGen.current)firstGen.current=n; lastGen.current=n; setReasoning(t=>t+(p.delta||""));}
-            else{setTools(ts=>{const n=[...ts];const i=n.findIndex(x=>x.name===p.tool_name&&!x.running);
-              if(i<0)n.push({name:p.tool_name,running:true});else n[i]={...n[i],running:true,preview:p.preview};
-              return n;});}
+            if(p.tool_name==="_thinking"){const n=Date.now(); if(!firstGen.current)firstGen.current=n; lastGen.current=n;
+              // Flat `reasoning` stays the running total (drives stats/phase).
+              // turnReasonSegs: append to the CURRENT segment (lazy-create).
+              turnReason+=p.delta||""; setReasoning(t=>t+(p.delta||""));
+              turnReasonSegs=[...(turnReasonSegs.length?turnReasonSegs:[""])];
+              turnReasonSegs[turnReasonSegs.length-1]+=p.delta||"";
+              setReasoningSegs(turnReasonSegs);}
+            else{turnTools=turnTools.some(x=>x.name===p.tool_name)?turnTools:[...turnTools,{name:p.tool_name,running:true,preview:p.preview}];
+              setTools(turnTools);}
           }
           else if(ev==="tool.started"){
             const t0=Date.now();
             // The model just finished emitting the tool-call tokens -> part of generation.
             if(!firstGen.current)firstGen.current=t0; lastGen.current=t0;
+            newSeg(); // close current thinking; next _thinking burst = new block
             toolState.current[p.tool_name]={t0,running:true,args:p.args||null};
-            setTools(ts=>{const n=[...ts];const i=n.findIndex(x=>x.name===p.tool_name&&!x.running);
-              if(i<0)n.push({name:p.tool_name,running:true,preview:p.preview,args:p.args||null});
-              else n[i]={...n[i],running:true,args:p.args||null,preview:p.preview};
-              return n;});
+            turnTools=turnTools.some(x=>x.name===p.tool_name)?turnTools:[...turnTools,{name:p.tool_name,running:true,preview:p.preview,args:p.args||null}];
+            setTools(turnTools);
           }
           else if(ev==="tool.completed"||ev==="tool.failed"){
             const st=toolState.current[p.tool_name];
@@ -977,12 +1028,14 @@ function App(){
               st.running=false;st.err=ev==="tool.failed";
               toolMs.current+=dur*1000;
             }
-            setTools(ts=>ts.map(t=>t.name===p.tool_name?{...t,running:false,dur:(st&&st.dur!=null)?st.dur:t.dur,err:ev==="tool.failed"}:t));
+            turnTools=turnTools.map(t=>t.name===p.tool_name?{...t,running:false,dur:(st&&st.dur!=null)?st.dur:t.dur,err:ev==="tool.failed"}:t);
+            setTools(turnTools);
           }
           else if(ev==="assistant.completed"){
             const n=Date.now(); if(!firstGen.current)firstGen.current=n; lastGen.current=n;
-            if(p.content)setStreamText(p.content);
-            setTools(ts=>ts.map(t=>({...t,running:false})));
+            if(p.content){turnText=p.content;setStreamText(p.content);}
+            turnTools=turnTools.map(t=>({...t,running:false}));
+            setTools(turnTools);
           }
           else if(ev==="run.completed"){
             const u=p.usage||{};
@@ -1004,21 +1057,22 @@ function App(){
             const modelMeta=(p.runtime&&p.runtime.model)||"";
             setStatsFinal({wallMs,toolMs:toolMsTotal/1000,modelMs,genMs,promptTok,genTok,
               spd:genMs>200?genTok/(genMs/1000):0,toolCount,model:modelMeta});
-            if(p.messages){
-              setMsgs(m=>{
-                const clean=m.filter(x=>x.id!=='__stream');
-                const mapped=p.messages.map((mm,ix)=>{
-                  const rec={id:mm.id||('m'+ix),role:mm.role,text:mm.content||"",reasoning:mm.reasoning||mm.reasoning_content||"",tool:mm.tool_name};
-                  if(mm.tool_name){
-                    const st=toolState.current[mm.tool_name];
-                    if(st){rec.args=st.args;if(st.dur!=null)rec.dur=st.dur;if(st.err)rec.err=true;}
-                  }
-                  return rec;
-                });
-                return [...clean,...mapped];
-              });
-            }else setMsgs(m=>[...m,{id:'a'+Date.now(),role:"assistant",text:p.content||streamText,reasoning}]);
-            setStreamText("");setReasoning("");setTools([]);
+            // Convert the LIVE streaming bubble into its final record IN PLACE,
+            // built from closure-local turnText/turnReasonSegs (never stale):
+            // one reasoning block per thinking burst, all tool rows preserved,
+            // and the final text. (Mapping p.messages here would drop tool_calls
+            // on assistant rows, making tools vanish at turn end.)
+            setMsgs(m=>{
+              const clean=m.filter(x=>x.id!=='__stream');
+              const finalRec={id:'a'+Date.now(),role:"assistant",
+                text:(p.content||turnText||"").trim(),
+                reasoning:(turnReason||"").trim(),
+                reasoningSegs:turnReasonSegs.map(x=>x.trim()).filter(Boolean),
+                tools:turnTools.map(t=>({...t,running:false}))};
+              if(!finalRec.text&&!finalRec.reasoning&&!finalRec.reasoningSegs.length&&!finalRec.tools.length)return clean;
+              return [...clean,finalRec];
+            });
+            setStreamText("");setReasoning("");setReasoningSegs([]);setTools([]);
             loadSessions().catch(()=>{});
             finished=true;
             try{reader.cancel().catch(()=>{});}catch(_){}
@@ -1028,7 +1082,14 @@ function App(){
         }
       }
       if(idleTimer)clearTimeout(idleTimer);
-      if(streamText||reasoning)setMsgs(m=>[...m,{id:'a'+Date.now(),role:"assistant",text:streamText,reasoning}]);
+      // Fallback (stream closed without run.completed): flush the turn's output
+      // from closure locals (state would be stale in this async callback).
+      if(turnText.trim()||turnReason.trim()){
+        const fid='a'+Date.now();
+        setMsgs(m=>[...m.filter(x=>x.id!=='__stream'),
+          {id:fid,role:"assistant",text:turnText.trim(),reasoning:turnReason.trim(),
+           reasoningSegs:turnReasonSegs.map(x=>x.trim()).filter(Boolean)}]);
+      }
     }catch(e){
       if(e.name!=="AbortError")setMsgs(m=>[...m,{id:'e'+Date.now(),role:"assistant",text:"",err:e.message}]);
     }finally{setStreaming(false);abortRef.current=null;}
@@ -1050,7 +1111,16 @@ function App(){
   const onKey=useCallback((e)=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();doSend();}},[doSend]);
 
   const q=query.trim().toLowerCase();
-  const filtered=sessions.filter(s=>!q||(s.title||"").toLowerCase().includes(q)||(s.model||"").toLowerCase().includes(q)||(s.source||"").toLowerCase().includes(q));
+  // The desktop app's internal auxiliary LLM calls (auto-title / tag / follow-up
+  // generation) are persisted as derived sessions with an `api-<16hex>` id and
+  // pollute this sidebar as title-less junk. Real user sessions here are
+  // `api_<ts>_<hex>` / `desktop_…`. Hide the derived-internal ones.
+  const isInternalDerived=s=>/^api-[0-9a-f]{16}$/.test(s.id||"");
+  // Empty (0-message) titleless sessions are abandoned "new chat" shells — drop
+  // them; a kept titleless session gets a friendly label instead of its raw id.
+  const emptyTitleless=s=>!s.title&&!s.preview&&(!s.message_count||s.message_count===0);
+  const filtered=sessions.filter(s=>!isInternalDerived(s)&&!emptyTitleless(s)&&(!q||(s.title||"").toLowerCase().includes(q)||(s.model||"").toLowerCase().includes(q)||(s.source||"").toLowerCase().includes(q)));
+  const dispTitle=s=>s.title||(s.id&&/^api[_-]/.test(s.id)?"New session":s.id);
   const groups={};
   for(const s of filtered){
     const g=SRC_LABEL[s.source]||"Other";
@@ -1058,7 +1128,7 @@ function App(){
   }
   const groupNames=Object.keys(groups).sort((a,b)=>groups[a].order-groups[b].order);
 
-  const liveMsg=streaming?{id:"__stream",role:"assistant",text:streamText,reasoning,tools,streaming:true}:null;
+  const liveMsg=streaming?{id:"__stream",role:"assistant",text:streamText,reasoning,reasoningSegs,tools,streaming:true}:null;
   return (
   <div className="app">
     <style>{`
@@ -1089,7 +1159,7 @@ function App(){
               <div key={s.id} className={"item"+(cur&&cur.id===s.id?" on":"")} onClick={e=>openSession(s,e)}>
                 <div className="body">
                   <div className="trow">
-                    <div className="name">{s.title||s.id}</div>
+                    <div className="name">{dispTitle(s)}</div>
                     <div className="ago">{timeAgo(s.last_active||s.started_at)}</div>
                   </div>
                   {s.preview&&<div className="prev">{s.preview}</div>}
@@ -1176,7 +1246,7 @@ function App(){
             <textarea ref={taRef} rows={1} placeholder={cur?"Message Hermes…":"Start a new chat — your first message creates the session"}
               value={draft} onChange={e=>setDraft(e.target.value)} onKey={onKey} disabled={streaming}/>
             <button className={"send"+(streaming?" stop":"")}
-              onClick={streaming?(()=>{if(abortRef.current)abortRef.current.abort();else{setStreaming(false);setStreamText("");setReasoning("");setTools([]);}}):doSend}
+              onClick={streaming?(()=>{if(abortRef.current)abortRef.current.abort();else{setStreaming(false);setStreamText("");setReasoning("");setReasoningSegs([]);setTools([]);}}):doSend}
               disabled={streaming?false:!draft.trim()} title={streaming?"Stop":"Send"}
               dangerouslySetInnerHTML={{__html:streaming?I.stop(16):I.send(17)}}/>
           </div>
