@@ -443,6 +443,23 @@ const estTok=s=>Math.round((s||0)/3.4);
 // "tokens out" estimate matches run.completed's output_tokens total, which counts
 // thinking + tool calls + text.
 const estToolsTok=list=>{if(!list||!list.length)return 0;let c=0;for(const t of list){c+=4;if(t.args){try{c+=Math.round((JSON.stringify(t.args)||"").length/3.4);}catch(_){c+=8;}}if(t.preview)c+=Math.round((t.preview||"").length/3.4);}return c;};
+// LIVE marginal tok/s: tokens arriving in the trailing ~2s window. This tracks the
+// actual decode rate and stays flat/correct across tool gaps, unlike a lifetime
+// average (total ÷ active-window) which collapses to ~1 while a long tool runs.
+// log = [{t,c}] monotonically-increasing arrival stamps; returns 0 when there is no
+// usable window yet (prefill, or a gap > 2s since the last token).
+const marginalTokPerSec=(log,now)=>{
+  if(!log||log.length<2)return 0;
+  const last=log[log.length-1];
+  const cutoff=now-2000;
+  // find the last arrival at/before the window start (binary search, log is ordered)
+  let lo=0,hi=log.length-1,ref=log[0];
+  while(lo<=hi){const mid=(lo+hi)>>1;if(log[mid].t<=cutoff){ref=log[mid];lo=mid+1;}else hi=mid-1;}
+  const spanMs=last.t-ref.t;
+  if(spanMs<400)return 0; // too short to be stable
+  const dTok=last.c-ref.c;
+  return dTok>0?dTok/(spanMs/1000):0;
+};
 const lsGet=(k,d)=>{ try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;} };
 const lsSet=(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} };
 const I={
@@ -603,7 +620,7 @@ function ToolRow({tool,streaming}){
     {res?<details className="tres"><summary>result</summary><pre className="tresbody">{String(res)}</pre></details>:null}
   </div>;
 }
-function StatsBar({streaming,st,reasonLen,textLen,toolMs,turnStart,firstGen,tools,nowTick,shownModel}){
+function StatsBar({streaming,st,reasonLen,textLen,toolMs,turnStart,firstGen,tools,nowTick,shownModel,tokLog}){
   void nowTick; // re-render tick while live
   const show=streaming||st;
   if(!show)return null;
@@ -611,12 +628,10 @@ function StatsBar({streaming,st,reasonLen,textLen,toolMs,turnStart,firstGen,tool
   const wallMs=streaming?Math.max(0,now-turnStart):st.wallMs;
   const toolMsNowMs=streaming?toolMs*1000:st.toolMs*1000;
   const modelMsNow=Math.max(0,wallMs-toolMsNowMs);
-  // tok/s is over the ACTIVE generation window only (first token emitted -> now,
-  // minus tool time inside it) — NOT wall clock. Prefill (prompt processing before
-  // the first token) does not count. Final turns use the stored genMs.
-  const genMsNow=streaming?(firstGen?Math.max(0,(now-firstGen)-toolMsNowMs):0):(st?st.genMs:0);
   const outTok=streaming?(estTok(reasonLen+textLen)+estToolsTok(tools)):(st?st.genTok:0);
-  const spd=streaming?(genMsNow>200&&outTok>0?outTok/(genMsNow/1000):0):(st&&st.spd||0);
+  // Live: trailing ~2s marginal rate (the real decode speed; ignores tool gaps).
+  // Final turn: exact output_tokens over the active generation window.
+  const spd=streaming?marginalTokPerSec(tokLog,now):(st&&st.spd||0);
   return <div className="tstats">
     <span className="ts-live"><i/> {streaming?"streaming":"turn"}</span>
     <div className="ts-cell"><span className="k">clock</span><span className="v">{fmtDur(wallMs/1000)}</span></div>
@@ -760,6 +775,7 @@ function App(){
   const [nowTick,setNowTick]=useState(0);
   const abortRef=useRef(null); const scrollRef=useRef(null); const taRef=useRef(null);
   const turnStart=useRef(0); const toolMs=useRef(0); const toolState=useRef({});
+  const tokLog=useRef([]); // {t,c} token-arrival log for the LIVE marginal tok/s
   const firstGen=useRef(0); const lastGen=useRef(0); // active-generation window: first token emitted -> last token
 
   // Follow-mode: while a turn is streaming, a requestAnimationFrame loop keeps the view pinned
@@ -1050,11 +1066,16 @@ function App(){
     let turnFinalized=false;
     setDraft("");setStreaming(true);setStreamText("");setReasoning("");setReasoningSegs([]);setTools([]);setStatsFinal(null);
     turnStart.current=Date.now();toolMs.current=0;toolState.current={};
-    firstGen.current=0;lastGen.current=0;
+    firstGen.current=0;lastGen.current=0;tokLog.current=[];
     // A NEW thinking segment = a burst of _thinking that follows a tool
     // boundary (the model thinks again before each tool call). Each burst is
     // one element of turnReasonSegs -> one block in the live bubble.
     const newSeg=()=>{turnReasonSegs=[...turnReasonSegs,""];setReasoningSegs(turnReasonSegs);};
+    // Record one arrival of model output (text / thinking / tool-call tokens).
+    // c = the CUMULATIVE token estimate so far (chars/3.4, same basis as the
+    // "tokens out" cell) so the trailing-window rate is correct even when a single
+    // SSE delta carries several tokens. Drives the LIVE marginal tok/s.
+    const logTok=()=>{const n=Date.now();tokLog.current.push({t:n,c:estTok(turnText.length+turnReason.length)});};
     setTimeout(scrollDown,30);
     const body={message:text};
     body.model_options={reasoning_effort: curEffort==="off"?"none":(curEffort||"none")};
@@ -1083,13 +1104,13 @@ function App(){
           if(!data)continue;let p;try{p=JSON.parse(data);}catch(_){continue;}
           if(ev==="assistant.delta"){
             const n=Date.now(); if(!firstGen.current)firstGen.current=n; lastGen.current=n;
-            turnText+=p.delta||""; setStreamText(t=>t+(p.delta||""));
+            turnText+=p.delta||""; setStreamText(t=>t+(p.delta||"")); logTok();
           }
           else if(ev==="tool.progress"){
             if(p.tool_name==="_thinking"){const n=Date.now(); if(!firstGen.current)firstGen.current=n; lastGen.current=n;
               // Flat `reasoning` stays the running total (drives stats/phase).
               // turnReasonSegs: append to the CURRENT segment (lazy-create).
-              turnReason+=p.delta||""; setReasoning(t=>t+(p.delta||""));
+              turnReason+=p.delta||""; setReasoning(t=>t+(p.delta||"")); logTok();
               turnReasonSegs=[...(turnReasonSegs.length?turnReasonSegs:[""])];
               turnReasonSegs[turnReasonSegs.length-1]+=p.delta||"";
               setReasoningSegs(turnReasonSegs);}
@@ -1099,7 +1120,7 @@ function App(){
           else if(ev==="tool.started"){
             const t0=Date.now();
             // The model just finished emitting the tool-call tokens -> part of generation.
-            if(!firstGen.current)firstGen.current=t0; lastGen.current=t0;
+            if(!firstGen.current)firstGen.current=t0; lastGen.current=t0; logTok();
             newSeg(); // close current thinking; next _thinking burst = new block
             toolState.current[p.tool_name]={t0,running:true,args:p.args||null};
             turnTools=turnTools.some(x=>x.name===p.tool_name)?turnTools:[...turnTools,{name:p.tool_name,running:true,preview:p.preview,args:p.args||null}];
@@ -1306,7 +1327,7 @@ function App(){
       <div className="chat" ref={scrollRef}>
         <div className="chat-inner">
           <StatsBar streaming={streaming} st={statsFinal} reasonLen={reasoning.length} textLen={streamText.length}
-            toolMs={toolMs.current/1000} turnStart={turnStart.current} firstGen={firstGen.current} tools={tools} nowTick={nowTick} shownModel={shownModel}/>
+            toolMs={toolMs.current/1000} turnStart={turnStart.current} firstGen={firstGen.current} tools={tools} nowTick={nowTick} shownModel={shownModel} tokLog={tokLog.current}/>
           {cur&&hasOlder&&msgs.length>0&&!streaming?
             <button className={"loadolder"+(olderBusy?" busy":"")} onClick={loadOlder}>
               {olderBusy?<span className="spin"></span>:null}
