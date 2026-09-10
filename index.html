@@ -1045,6 +1045,9 @@ function App(){
     // callbacks would otherwise read `streamText`/`reasoning` from a stale
     // render closure (stuck at ""), so the final record is built from these.
     let turnText="",turnReason="",turnReasonSegs=[],turnTools=[],turnId=null;
+    // Set when the turn already produced its final bubble (run.completed).
+    // The clean-end fallback and the abort flush must NOT run twice for it.
+    let turnFinalized=false;
     setDraft("");setStreaming(true);setStreamText("");setReasoning("");setReasoningSegs([]);setTools([]);setStatsFinal(null);
     turnStart.current=Date.now();toolMs.current=0;toolState.current={};
     firstGen.current=0;lastGen.current=0;
@@ -1153,6 +1156,7 @@ function App(){
               if(!finalRec.text&&!finalRec.reasoning&&!finalRec.reasoningSegs.length&&!finalRec.tools.length)return clean;
               return [...clean,finalRec];
             });
+            turnFinalized=true;
             setStreamText("");setReasoning("");setReasoningSegs([]);setTools([]);
             // The newest-500 window just shifted forward (new messages appended),
             // so re-anchor the older-page cursor; id-dedupe keeps it safe.
@@ -1166,16 +1170,33 @@ function App(){
         }
       }
       if(idleTimer)clearTimeout(idleTimer);
-      // Fallback (stream closed without run.completed): flush the turn's output
-      // from closure locals (state would be stale in this async callback).
-      if(turnText.trim()||turnReason.trim()){
+      // Fallback (stream closed WITHOUT run.completed — e.g. server dropped the
+      // connection mid-turn): flush the turn's output from closure locals, but
+      // only if run.completed did NOT already finalize it (else we'd append a
+      // second, identical final bubble after its in-place conversion).
+      if(!turnFinalized&&(turnText.trim()||turnReason.trim()||turnTools.length)){
         const fid='a'+Date.now();
         setMsgs(m=>[...m.filter(x=>x.id!=='__stream'),
           {id:fid,role:"assistant",text:turnText.trim(),reasoning:turnReason.trim(),
-           reasoningSegs:turnReasonSegs.map(x=>x.trim()).filter(Boolean)}]);
+           reasoningSegs:turnReasonSegs.map(x=>x.trim()).filter(Boolean),
+           tools:turnTools.map(t=>({...t,running:false}))}]);
       }
     }catch(e){
-      if(e.name!=="AbortError")setMsgs(m=>[...m,{id:'e'+Date.now(),role:"assistant",text:"",err:e.message}]);
+      if(e.name==="AbortError"){
+        // Stop (or the 150s idle watchdog): the live bubble unmounts in
+        // `finally`, and the clean-end fallback above never ran because the
+        // abort THREW — so flush the partial output here or it is lost.
+        // `!turnFinalized` guards the edge where a run.completed arrived in the
+        // same frame batch before the abort (already finalized -> no double).
+        if(!turnFinalized&&(turnText.trim()||turnReason.trim()||turnTools.length)){
+          const fid='a'+Date.now();
+          setMsgs(m=>[...m.filter(x=>x.id!=='__stream'),
+            {id:fid,role:"assistant",text:turnText.trim(),reasoning:turnReason.trim(),
+             reasoningSegs:turnReasonSegs.map(x=>x.trim()).filter(Boolean),
+             tools:turnTools.map(t=>({...t,running:false}))}]);
+        }
+      }
+      else setMsgs(m=>[...m,{id:'e'+Date.now(),role:"assistant",text:"",err:e.message}]);
     }finally{setStreaming(false);abortRef.current=null;}
   },[draft,streaming,cur,curEffort,stopSpeak,loadSessions,applyPendingModel]);
 
