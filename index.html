@@ -171,6 +171,14 @@
     padding:24px 18px 14px;scroll-behavior:auto;
     background:radial-gradient(1200px 400px at 50% -10%,rgba(53,224,255,.05),transparent 60%),var(--chat)}
   .chat-inner{max-width:860px;margin:0 auto}
+  .loadolder{display:flex;align-items:center;justify-content:center;gap:7px;margin:0 auto 18px;width:max-content;max-width:100%;
+    padding:7px 14px;border-radius:999px;cursor:pointer;
+    background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+    font:600 12px/1 var(--mono);letter-spacing:.2px;transition:color .13s,border-color .13s}
+  .loadolder:hover{color:var(--accent-hi);border-color:var(--accent-dim)}
+  .loadolder.busy{opacity:.6;cursor:default}
+  .loadolder .spin{width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--accent-hi);border-radius:50%;animation:sp .7s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
   .msg{display:flex;margin:0 0 20px}
   .msg.user{flex-direction:column;align-items:flex-end}
   .msg.assistant{display:block}
@@ -413,7 +421,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const {useState,useEffect,useRef,useCallback,useMemo}=React;
+const {useState,useEffect,useLayoutEffect,useRef,useCallback,useMemo}=React;
 const API=location.protocol+'//'+location.host;
 const SRC_LABEL={desktop:"Desktop",telegram:"Telegram",cron:"Cron",api_server:"This app",web_client:"This app",cli:"CLI"};
 const SRC_ORDER={api_server:0,web_client:0,desktop:1,telegram:2,cron:3,cli:4};
@@ -710,6 +718,10 @@ function App(){
   const [msgs,setMsgs]=useState([]);
   const [loading,setLoading]=useState(true);
   const [loadingMsgs,setLoadingMsgs]=useState(false);
+  const [hasOlder,setHasOlder]=useState(false);
+  const [olderBusy,setOlderBusy]=useState(false);
+  const olderGuard=useRef(false);
+  const olderOffset=useRef(500);
   const [effort,setEffort]=useState(()=>lsGet("hermes.efforts",{}));
   const [locks,setLocks]=useState(()=>lsGet("hermes.locks",{}));
   const [pendingModel,setPendingModel]=useState(null); // model picked while no session open; applied to next active session
@@ -811,41 +823,84 @@ function App(){
     catch(e){}finally{setLoading(false);}
   },[]);
 
+  // Shared history parser: assistant rows carry tool_calls[].function.{name,arguments(JSON)};
+  // separate role:"tool" rows carry results, matched via tool_call_id.
+  const parseHistory=useCallback((rows)=>{
+    const byId={};
+    (rows||[]).forEach(m=>{ if(m.tool_name&&m.tool_call_id) byId[m.tool_call_id]={tool:m.tool_name,result:m.content||""}; });
+    return (rows||[]).map((m,ix)=>{
+      const id=m.id||('m'+ix);
+      if(m.role==="tool")return null; // results merge into their assistant card
+      const rec={id,role:m.role,text:m.content||"",reasoning:m.reasoning||m.reasoning_content||""};
+      const tcs=m.tool_calls||[];
+      if(tcs.length){
+        rec.tools=tcs.map(tc=>{
+          let a=null;try{a=typeof tc.function.arguments==="string"?JSON.parse(tc.function.arguments):tc.function.arguments;}catch(_){a=tc.function.arguments;}
+          const rs=byId[tc.id]||byId[tc.call_id]||null;
+          const t={name:tc.function.name||"",args:a};
+          if(rs){t.result=rs.result||"";t.err=/\berror\b|\bfailed\b|denied|refused/i.test(rs.result||"");}
+          return t;
+        });
+      }
+      return rec;
+    }).filter(m=>m&&(m.text||m.reasoning||(m.tools&&m.tools.length)));
+  },[]);
+
   const refreshMessages=useCallback(async(id)=>{
     try{
       // order=latest returns the NEWEST `limit` messages in ascending order.
       // (order=oldest truncates long sessions to the oldest N and silently
       // drops the recent conversation — the "resuming a desktop session" bug.)
       const r=await fetch(API+"/api/sessions/"+id+"/messages?limit=500&order=latest");const d=await r.json();
-      // History: assistant msgs carry tool_calls[].function.{name,arguments(JSON string)};
-      // separate role:"tool" msgs carry results, matched via tool_call_id.
-      const byId={};
-      (d.data||[]).forEach(m=>{ if(m.tool_name&&m.tool_call_id) byId[m.tool_call_id]={tool:m.tool_name,result:m.content||""}; });
-      const out=(d.data||[]).map((m,ix)=>{
-        const id=m.id||('m'+ix);
-        if(m.role==="tool")return null; // results merge into their assistant card
-        const rec={id,role:m.role,text:m.content||"",reasoning:m.reasoning||m.reasoning_content||""};
-        const tcs=m.tool_calls||[];
-        if(tcs.length){
-          rec.tools=tcs.map(tc=>{
-            let a=null;try{a=typeof tc.function.arguments==="string"?JSON.parse(tc.function.arguments):tc.function.arguments;}catch(_){a=tc.function.arguments;}
-            const rs=byId[tc.id]||byId[tc.call_id]||null;
-            const t={name:tc.function.name||"",args:a};
-            if(rs){t.result=rs.result||"";t.err=/\berror\b|\bfailed\b|denied|refused/i.test(rs.result||"");}
-            return t;
-          });
-        }
-        return rec;
-      }).filter(m=>m&&(m.text||m.reasoning||(m.tools&&m.tools.length)));
+      const out=parseHistory(d.data);
+      olderOffset.current=500;
+      setHasOlder((d.data||[]).length>=500);
       setMsgs(out);setTimeout(scrollDown,60);return out;
     }catch(e){showToast("load messages: "+e.message);return [];}
-  },[showToast,scrollDown]);
+  },[parseHistory,showToast,scrollDown]);
+
+  // Fetch the next page of OLDER history (beyond the newest 500) and PREPEND it.
+  // The view stays anchored to the same content: a useLayoutEffect runs right after
+  // React commits the prepend (before paint) and adds the height delta to scrollTop.
+  const olderApplied=useRef(0);
+  const anchorSH=useRef(null);
+  const loadOlder=useCallback(async()=>{
+    if(!cur||olderGuard.current)return;
+    olderGuard.current=true;setOlderBusy(true);
+    const el=scrollRef.current;
+    anchorSH.current=el?el.scrollHeight:null;
+    try{
+      const r=await fetch(API+"/api/sessions/"+cur.id+"/messages?limit=500&order=latest&offset="+olderOffset.current);
+      const d=await r.json();
+      const rows=d.data||[];
+      const got=parseHistory(rows);
+      olderOffset.current+=rows.length;
+      if(rows.length<500)setHasOlder(false);
+      // prepend, deduping by id against what we already show
+      const seen=new Set(msgs.map(m=>m.id));
+      const prepended=got.filter(m=>!seen.has(m.id));
+      if(prepended.length)olderApplied.current=Date.now();
+      setMsgs(prev=>[...prepended,...prev]);
+    }catch(e){showToast("load older: "+e.message);}
+    finally{olderGuard.current=false;setOlderBusy(false);}
+  },[cur,msgs,parseHistory,showToast]);
+  // After a prepend commits, shift the view down by exactly the added height.
+  useLayoutEffect(()=>{
+    const ts=olderApplied.current;if(!ts)return;
+    const sc=scrollRef.current;
+    if(sc){
+      const dSH=anchorSH.current!=null?sc.scrollHeight-anchorSH.current:0;
+      sc.scrollTop+=dSH;
+    }
+    olderApplied.current=0;anchorSH.current=null;
+  },[msgs]);
 
   const stopSpeak=useCallback(()=>{try{window.speechSynthesis&&window.speechSynthesis.cancel();}catch(e){}setSpeaking(null);},[]);
 
   const openSession=useCallback(async(s)=>{
     stopSpeak();setCur(s);setMsgs([]);setSideOpen(false);
     setStreamText("");setReasoning("");setReasoningSegs([]);setTools([]);setLoadingMsgs(true);
+    setHasOlder(false);setOlderBusy(false);olderOffset.current=500;
     setFollowing(true);
     const loaded=await refreshMessages(s.id);setLoadingMsgs(false);
     // Self-heal: a session with no real title would otherwise render its raw
@@ -886,6 +941,7 @@ function App(){
       const d=await r.json();const s=d.session;
       stopSpeak();setCur(s);setMsgs([]);setSideOpen(false);
       setStreamText("");setReasoning("");setTools([]);
+      setHasOlder(false);olderOffset.current=500;
       setFollowing(true);
       applyPendingModel(s);
       loadSessions().catch(()=>{});
@@ -1073,6 +1129,9 @@ function App(){
               return [...clean,finalRec];
             });
             setStreamText("");setReasoning("");setReasoningSegs([]);setTools([]);
+            // The newest-500 window just shifted forward (new messages appended),
+            // so re-anchor the older-page cursor; id-dedupe keeps it safe.
+            olderOffset.current=500;
             loadSessions().catch(()=>{});
             finished=true;
             try{reader.cancel().catch(()=>{});}catch(_){}
@@ -1201,6 +1260,11 @@ function App(){
         <div className="chat-inner">
           <StatsBar streaming={streaming} st={statsFinal} reasonLen={reasoning.length} textLen={streamText.length}
             toolMs={toolMs.current/1000} turnStart={turnStart.current} firstGen={firstGen.current} tools={tools} nowTick={nowTick} shownModel={shownModel}/>
+          {cur&&hasOlder&&msgs.length>0&&!streaming?
+            <button className={"loadolder"+(olderBusy?" busy":"")} onClick={loadOlder}>
+              {olderBusy?<span className="spin"></span>:null}
+              <span>{olderBusy?"loading…":"Load older messages"}</span>
+            </button>:null}
           {!cur?(
             <div className="empty-main">
               <div className="big">H</div>
