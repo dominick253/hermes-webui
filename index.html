@@ -120,7 +120,15 @@
   .item .del:hover::after{content:"Delete";position:absolute;right:28px;top:50%;transform:translateY(-50%);
     background:var(--panel3);border:1px solid var(--line2);color:var(--fg);
     font-size:10.5px;font-weight:600;letter-spacing:.3px;padding:2px 8px;border-radius:5px;white-space:nowrap;
-    font-family:var(--sans)}
+    font-family:var(--sans);z-index:5}
+  .item .ren{position:absolute;right:34px;bottom:8px;background:transparent;border:none;
+    color:var(--faint);cursor:pointer;padding:4px;border-radius:6px;display:none;transition:color .13s,background .13s}
+  .item:hover .ren{display:block}
+  .item .ren:hover{color:var(--accent);background:rgba(95,214,232,.12)}
+  .item .ren:hover::after{content:"Rename";position:absolute;right:28px;top:50%;transform:translateY(-50%);
+    background:var(--panel3);border:1px solid var(--line2);color:var(--fg);
+    font-size:10.5px;font-weight:600;letter-spacing:.3px;padding:2px 8px;border-radius:5px;white-space:nowrap;
+    font-family:var(--sans);z-index:5}
   .side-foot{border-top:1px solid var(--line);padding:12px 14px;
     display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;background:var(--panel)}
   .side-foot .pulse{width:9px;height:9px;border-radius:50%;background:var(--green);
@@ -411,6 +419,7 @@
     .iconbtn{display:flex}
     .modelpill .mp{display:none}
     .item .del{display:block;opacity:.45}
+    .item .ren{display:block;opacity:.45}
     .bubble{max-width:94%}
   }
 </style>
@@ -440,6 +449,7 @@ const I={
   plus:s=>`<svg width="${s||14}" height="${s||14}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
   search:s=>`<svg width="${s||14}" height="${s||14}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>`,
   trash:s=>`<svg width="${s||14}" height="${s||14}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>`,
+  pencil:s=>`<svg width="${s||14}" height="${s||14}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>`,
   check:s=>`<svg width="${s||14}" height="${s||14}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`,
   speaker:s=>`<svg width="${s||15}" height="${s||15}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 15.5a3.5 3.5 0 004.5-4.5"/></svg>`,
   copy:s=>`<svg width="${s||12}" height="${s||12}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/></svg>`,
@@ -959,6 +969,21 @@ function App(){
     }catch(err){showToast("delete: "+err.message);}
   },[cur,loadSessions,showToast]);
 
+  const renameSession=useCallback(async(e,s)=>{
+    e.stopPropagation();
+    const t=window.prompt("Rename session", s.title||"");
+    if(t===null)return;
+    const v=t.trim();
+    if(!v||v===s.title){loadSessions();return;}
+    try{
+      const r=await fetch(API+"/api/sessions/"+s.id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:v})});
+      if(!r.ok){const d=await r.json().catch(()=>({}));showToast("rename: "+(d.error?.message||r.status));return;}
+      if(cur&&cur.id===s.id)setCur(c=>c?{...c,title:v}:c);
+      loadSessions();
+      showToast("Renamed");
+    }catch(err){showToast("rename: "+err.message);}
+  },[cur,loadSessions,showToast]);
+
   const doCopy=useCallback(async(t)=>{try{await navigator.clipboard.writeText(t);showToast("Copied");}catch(_){showToast("Copy failed");}},[showToast]);
 
   const stripMd=t=>t.replace(/```[\s\S]*?```/g,' ').replace(/`([^`]+)`/g,'$1').replace(/[*_#>[\]()]/g,'').replace(/\s+/g,' ').trim();
@@ -1227,7 +1252,8 @@ function App(){
                     {typeof s.message_count==="number"&&<span className="pill">{s.message_count}</span>}
                   </div>
                 </div>
-                <button className="del" title="Delete" onClick={e=>delSession(e,s)} title="Delete session" aria-label="Delete session" dangerouslySetInnerHTML={{__html:I.trash(14)}}></button>
+                <button className="ren" title="Rename" aria-label="Rename session" onClick={e=>renameSession(e,s)} dangerouslySetInnerHTML={{__html:I.pencil(14)}}></button>
+                <button className="del" title="Delete" aria-label="Delete session" onClick={e=>delSession(e,s)} dangerouslySetInnerHTML={{__html:I.trash(14)}}></button>
               </div>
             ))}
           </div>
